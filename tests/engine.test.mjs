@@ -329,26 +329,20 @@ test('software list names plugins for software sessions only', () => {
 test('creative constraints are rolled only when chosen and always fit the session', () => {
   const rng = makeRng(37);
   const ids = new Map(BUILT_IN_CONSTRAINTS.map((c) => [c.id, c]));
-  let withConstraint = 0;
   for (let i = 0; i < 400; i++) {
-    const r = generateSession({ config, rng });
-    if (r.selections.constraint === 'none') {
-      assert.equal(r.constraint, undefined);
-    } else {
-      assert.equal(r.selections.constraint, 'add');
-      assert.ok(r.constraint, 'a constraint text is picked');
-      withConstraint++;
-      const c = ids.get(r.constraintId);
-      assert.ok(c && matchesScope(c.scope, r.selections), `${r.constraintId} fits ${JSON.stringify(r.selections)}`);
-    }
+    const r = generateSession({ config, rng, withConstraint: true });
+    assert.ok(r.constraint, 'a constraint text is picked');
+    assert.equal(r.selections.constraint, undefined, 'the constraint is not a tree decision');
+    const c = ids.get(r.constraintId);
+    assert.ok(c && matchesScope(c.scope, r.selections), `${r.constraintId} fits ${JSON.stringify(r.selections)}`);
   }
-  assert.ok(withConstraint > 100 && withConstraint < 300, `roughly half get one (${withConstraint})`);
-  const off = generateSession({ locks: { constraint: 'none' }, config, rng });
-  assert.equal(off.constraint, undefined);
+  const off = generateSession({ config, rng });
+  assert.equal(off.constraint, undefined, 'off by default');
   const drums = generateSession({
-    locks: { category: 'assets', assetType: 'loop', loopKind: 'drums', constraint: 'add' },
+    locks: { category: 'assets', assetType: 'loop', loopKind: 'drums' },
     config,
     rng,
+    withConstraint: true,
   });
   assert.ok(drums.constraint);
   assert.notEqual(drums.constraintId, 'c-mode', 'melodic rules never land on drum loops');
@@ -361,7 +355,7 @@ test('constraints respect switches and custom additions', () => {
   const cfg = { ...config, constraints: { disabled: [...disabled, 'c-three-sounds'], custom: [custom] } };
   let sawCustom = false;
   for (let i = 0; i < 300; i++) {
-    const r = generateSession({ locks: { category: 'jamming', constraint: 'add' }, config: cfg, rng });
+    const r = generateSession({ locks: { category: 'jamming' }, config: cfg, rng, withConstraint: true });
     assert.ok(!disabled.includes(r.constraintId) && r.constraintId !== 'c-three-sounds');
     if (r.constraintId === 'mine') {
       sawCustom = true;
@@ -373,6 +367,20 @@ test('constraints respect switches and custom additions', () => {
     ...config,
     constraints: { disabled: BUILT_IN_CONSTRAINTS.map((c) => c.id), custom: [] },
   };
-  const none = generateSession({ locks: { constraint: 'add' }, config: everythingOff, rng });
+  const none = generateSession({ config: everythingOff, rng, withConstraint: true });
   assert.equal(none.constraint, undefined, 'no pool means no line, no crash');
+});
+
+test('pickConstraint avoids the current rule when it can', async () => {
+  const { pickConstraint } = await import('../js/engine.js');
+  const rng = makeRng(43);
+  const sel = { category: 'jamming', jamType: 'synth' };
+  for (let i = 0; i < 50; i++) {
+    assert.notEqual(pickConstraint(config, sel, rng, 'c-one-hand').id, 'c-one-hand');
+  }
+  const single = {
+    constraints: { disabled: BUILT_IN_CONSTRAINTS.filter((c) => c.id !== 'c-one-hand').map((c) => c.id), custom: [] },
+  };
+  assert.equal(pickConstraint(single, sel, rng, 'c-one-hand').id, 'c-one-hand', 'a pool of one still returns it');
+  assert.equal(pickConstraint({ constraints: { disabled: BUILT_IN_CONSTRAINTS.map((c) => c.id) } }, sel, rng), null);
 });

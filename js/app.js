@@ -1,7 +1,6 @@
-import { generateSession, isApplicable, isCompatible, optionWeight, pruneLocks } from './engine.js';
+import { generateSession, isApplicable, isCompatible, optionWeight, pickConstraint, pruneLocks } from './engine.js';
 import { BUILT_IN_CONSTRAINTS, SCOPES } from './constraints.js';
 import {
-  CONSTRAINT_DECISION,
   DEFAULT_WEIGHT,
   DEVICE_DECISION,
   DEVICE_TYPES,
@@ -235,7 +234,12 @@ function setLock(decisionId, optionId) {
 }
 
 function generate() {
-  const result = generateSession({ locks: state.locks, weights: state.settings.weights, config: state.settings });
+  const result = generateSession({
+    locks: state.locks,
+    weights: state.settings.weights,
+    config: state.settings,
+    withConstraint: state.settings.constraints.enabled,
+  });
   state.result = result;
   persistSession();
   render();
@@ -523,7 +527,6 @@ function renderResult() {
     if (value === undefined) continue;
     if (decision.id === 'category') continue;
     if (decision.id === FX_DECISION && value === FX_NONE) continue;
-    if (decision.id === CONSTRAINT_DECISION) continue;
     const option = decision.options.find((o) => o.id === value);
     if (!option) continue;
     tags.push(
@@ -539,7 +542,7 @@ function renderResult() {
       <p class="eyebrow">${esc(r.categoryLabel)} · ${esc(r.title)}</p>
       <h2 class="prompt">${esc(r.prompt)}</h2>
       ${r.twist ? `<p class="twist">${esc(r.twist)}</p>` : ''}
-      ${r.constraint ? `<p class="constraint">Constraint: ${esc(r.constraint)}</p>` : ''}
+      ${r.constraint ? `<p class="constraint">Constraint: ${esc(r.constraint)} <button type="button" class="link" data-action="new-constraint" aria-label="Pick a different rule">↻ different rule</button></p>` : ''}
       <ul class="chips">${tags.join('')}</ul>
       ${previous ? `<p class="last-done">Last ${esc(r.title.toLowerCase())} session: ${timeAgo(previous.createdAt)}.</p>` : ''}
       ${r.conflicts?.length ? `<p class="notice">${r.conflicts.map(esc).join('<br>')}</p>` : ''}
@@ -614,7 +617,6 @@ function renderBuilder() {
     [SOFTWARE_DECISION]: 'from your software list',
     [TRACK_DECISION]: 'from your track list',
     [FX_DECISION]: 'optional',
-    [CONSTRAINT_DECISION]: 'optional',
   };
   for (const decision of decisions) {
     if (!isApplicable(decision, state.locks)) continue;
@@ -645,6 +647,10 @@ function renderBuilder() {
       <h2>${state.result ? 'Adjust and reroll' : 'Build your session'}</h2>
       <p class="muted">Lock what you want. Everything left on Random gets rolled with your weights.</p>
       ${rows.join('')}
+      <div class="field toggle-row">
+        <span class="label">Creative constraint<span class="sub">Add one extra rule to this session</span></span>
+        <label class="switch"><input type="checkbox" data-action="toggle-constraints" ${state.settings.constraints.enabled ? 'checked' : ''} aria-label="Add a creative constraint"><span></span></label>
+      </div>
       <div class="btn-row">
         <button class="btn primary big" data-action="generate">${state.result ? 'Roll again' : 'Generate session'}</button>
       </div>
@@ -870,7 +876,7 @@ function renderConstraintsSection() {
   return `
     <section class="card">
       <h2>Creative constraints</h2>
-      <p class="muted">Optional extra rules rolled on top of a session, matched to what you are doing. ${enabledCount} active. How often one shows up is the "Creative constraint" weight under Probabilities.</p>
+      <p class="muted">Extra rules matched to what you are doing, ${enabledCount} active. Turn the "Creative constraint" switch on in the session builder to get one with each roll.</p>
       <h3>Your own</h3>
       ${customList || '<p class="empty">Add rules of your own below. They join the pool for the session type you pick.</p>'}
       <form class="add-row" data-action="add-constraint">
@@ -1121,6 +1127,18 @@ root.addEventListener('click', (event) => {
         if (stars) stars.outerHTML = renderStars(state.logDraft.rating, true);
       }
       break;
+    case 'new-constraint':
+      if (state.result) {
+        const picked = pickConstraint(state.settings, state.result.selections, Math.random, state.result.constraintId);
+        if (picked) {
+          state.result = { ...state.result, constraint: picked.text, constraintId: picked.id };
+          persistSession();
+          render();
+        } else {
+          showToast('No other rule fits this session.');
+        }
+      }
+      break;
     case 'remove-constraint':
       state.settings = {
         ...state.settings,
@@ -1278,6 +1296,14 @@ root.addEventListener('change', (event) => {
       persistSettings();
       if (el.checked && timer.state.status === 'running') timer.requestWakeLock();
       if (!el.checked) timer.releaseWakeLock();
+      break;
+    case 'toggle-constraints':
+      state.settings = {
+        ...state.settings,
+        constraints: { ...state.settings.constraints, enabled: el.checked },
+      };
+      persistSettings();
+      showToast(el.checked ? 'Next roll adds a constraint' : 'Constraints off');
       break;
     case 'toggle-constraint': {
       const id = el.dataset.id;

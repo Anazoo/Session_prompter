@@ -168,18 +168,7 @@ export const STATIC_DECISIONS = [
       { id: '7/8', label: '7/8', weight: 1 },
     ],
   },
-  {
-    id: 'constraint',
-    label: 'Creative constraint',
-    hint: 'An optional extra rule for the session. Which rules exist is set under Creative constraints.',
-    options: [
-      { id: 'none', label: 'None' },
-      { id: 'add', label: 'Add one' },
-    ],
-  },
 ];
-
-export const CONSTRAINT_DECISION = 'constraint';
 
 // Ids of the decisions that are generated from user lists (hardware, software, tracks).
 export const DEVICE_DECISION = 'device';

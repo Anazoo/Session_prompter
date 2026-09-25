@@ -1,7 +1,6 @@
 // Resolution engine: turns the user's locked choices plus weights into a full session.
 import { constraintPool } from './constraints.js';
 import {
-  CONSTRAINT_DECISION,
   DEFAULT_WEIGHT,
   DEVICE_DECISION,
   DEVICE_TYPES,
@@ -152,7 +151,21 @@ function randomInt(rng, min, max) {
  * Add the details that are not tree choices (BPM), then produce readable text.
  * @returns {{selections, locked, conflicts, bpm?: number, title: string, prompt: string, detail: string[], twist?: string}}
  */
-export function generateSession({ locks = {}, weights = {}, config = {}, rng = Math.random }) {
+/**
+ * Pick a creative constraint that fits the selections, avoiding `excludeId` when the pool allows it.
+ * @returns {{id: string, text: string} | null}
+ */
+export function pickConstraint(config, selections, rng = Math.random, excludeId = null) {
+  const pool = constraintPool(config, selections);
+  const candidates = pool.length > 1 && excludeId ? pool.filter((c) => c.id !== excludeId) : pool;
+  const picked = weightedPick(candidates, () => 1, rng);
+  return picked ? { id: picked.id, text: picked.text } : null;
+}
+
+/**
+ * @param {{locks?: object, weights?: object, config?: object, rng?: Function, withConstraint?: boolean}} args
+ */
+export function generateSession({ locks = {}, weights = {}, config = {}, rng = Math.random, withConstraint = false }) {
   const result = resolve({ locks, weights, config, rng });
   const sel = result.selections;
   const decisions = buildDecisions(config);
@@ -251,9 +264,8 @@ export function generateSession({ locks = {}, weights = {}, config = {}, rng = M
   if (track && !detail.includes(track.name)) detail.push(track.name);
   if (pedal) result.twist = `Twist: run something through the ${pedal.name}.`;
 
-  if (sel[CONSTRAINT_DECISION] === 'add') {
-    const pool = constraintPool(config, sel);
-    const picked = weightedPick(pool, () => 1, rng);
+  if (withConstraint) {
+    const picked = pickConstraint(config, sel, rng);
     if (picked) {
       result.constraint = picked.text;
       result.constraintId = picked.id;

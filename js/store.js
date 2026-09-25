@@ -14,7 +14,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   bpm: { min: 70, max: 160 },
   timer: { minutes: 60, keepAwake: true, chime: true },
   // Built-in constraint ids switched off, plus user-written constraints.
-  constraints: { disabled: [], custom: [] },
+  constraints: { enabled: false, disabled: [], custom: [] },
 });
 
 export function uid() {
@@ -83,7 +83,7 @@ export function normalizeSettings(raw) {
       keepAwake: raw.timer?.keepAwake !== false,
       chime: raw.timer?.chime !== false,
     },
-    constraints: { disabled, custom },
+    constraints: { enabled: raw.constraints?.enabled === true, disabled, custom },
   };
 }
 

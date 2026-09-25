@@ -17,8 +17,8 @@ actually do it.
   straight from the mic). Shows totals per session type, your average rating
   and when you last did each one.
 - A pool of **creative constraints** ("No kick on beat one", "Only three
-  sounds") rolled as an optional extra line, matched to the session type.
-  Switch built-in rules off or add your own.
+  sounds") added as an extra line when you flip the switch, matched to the
+  session type. Switch built-in rules off or add your own.
 - **Backup export and import** of settings, gear lists, tracks and journal notes.
 - Installable on **iPhone** as a home-screen app; works offline.
 
@@ -55,12 +55,12 @@ For "software" loops and sound design the same happens with your software
 list: a synth plugin gets pads and presets, a drum plugin gets drum loops.
 Effects from either list feed the twist.
 
-A **creative constraint** decision sits at the end of the tree: "None" or "Add
-one", weighted like anything else (50/50 by default). When one is added, the
-app picks a rule that fits the session: drum rules only for drum loops and
-kits, melodic rules for pads, chords and melodies, and so on. The built-in
-pool lives in `js/constraints.js`; Settings lets you switch any rule off and
-add your own with a scope.
+A **Creative constraint** switch in the session builder decides whether a roll
+also gets an extra rule. The app picks one that fits the session: drum rules
+only for drum loops and kits, melodic rules for pads, chords and melodies, and
+so on. Tap "different rule" on the result to swap it. The switch is remembered
+between sessions. The built-in pool lives in `js/constraints.js`; Settings lets
+you switch any rule off and add your own with a scope.
 
 Locks are validated against each other. Lock "Live recording" for sound design
 and the target becomes a one-shot; lock a drum machine and the loop type becomes

@@ -1020,3 +1020,20 @@ textarea {
   color: var(--muted);
   font-size: 12px;
 }
+
+.toggle-row {
+  margin-top: 6px;
+  border-top: 1px solid var(--border);
+  border-bottom: 0;
+}
+
+.link {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  padding: 4px 6px;
+  margin-left: 2px;
+  white-space: nowrap;
+}
