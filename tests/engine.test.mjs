@@ -384,3 +384,140 @@ test('pickConstraint avoids the current rule when it can', async () => {
   assert.equal(pickConstraint(single, sel, rng, 'c-one-hand').id, 'c-one-hand', 'a pool of one still returns it');
   assert.equal(pickConstraint({ constraints: { disabled: BUILT_IN_CONSTRAINTS.map((c) => c.id) } }, sel, rng), null);
 });
+
+test('presets split into instrument and effect, and effects units only design effect presets', () => {
+  const rng = makeRng(47);
+  let sawEffect = false;
+  for (let i = 0; i < 300; i++) {
+    const r = generateSession({
+      locks: { category: 'assets', assetType: 'sound', soundKind: 'preset', soundMethod: 'hardware' },
+      config,
+      rng,
+    });
+    assert.ok(['instrument', 'effect'].includes(r.selections.presetKind));
+    if (r.selections.presetKind === 'effect') {
+      sawEffect = true;
+      assert.equal(r.selections[DEVICE_DECISION], 'micro', 'the pedal is the target');
+      assert.match(r.prompt, /^Design an effect preset on the Microcosm\.$/);
+      assert.equal(r.twist, undefined, 'the target pedal is not also the twist');
+    } else {
+      assert.notEqual(r.selections[DEVICE_DECISION], 'micro');
+      assert.match(r.prompt, /^Design an instrument preset on the (Prophet-6|Nord Piano)\.$/);
+    }
+  }
+  assert.ok(sawEffect);
+  const noPedal = { ...config, hardware: config.hardware.filter((h) => h.type !== 'fx') };
+  const bare = generateSession({
+    locks: {
+      category: 'assets',
+      assetType: 'sound',
+      soundKind: 'preset',
+      presetKind: 'effect',
+      soundMethod: 'hardware',
+    },
+    config: noPedal,
+    rng,
+  });
+  assert.equal(bare.prompt, 'Design an effect preset on a hardware effect.');
+  for (let i = 0; i < 100; i++) {
+    const other = generateSession({
+      locks: { category: 'assets', assetType: 'loop', loopMethod: 'hardware' },
+      config,
+      rng,
+    });
+    assert.notEqual(other.selections[DEVICE_DECISION], 'micro', 'pedals never lead a loop');
+  }
+  const soft = generateSession({
+    locks: {
+      category: 'assets',
+      assetType: 'sound',
+      soundKind: 'preset',
+      presetKind: 'effect',
+      soundMethod: 'software',
+    },
+    config: { ...config, software: [{ id: 'valhalla', name: 'Valhalla', type: 'fx', weight: 5 }] },
+    rng,
+  });
+  assert.equal(soft.prompt, 'Design an effect preset in Valhalla.');
+  assert.equal(soft.twist, undefined);
+});
+
+test('jam rigs are built from hardware combinations, honouring exclusions and custom rigs', async () => {
+  const { allJamRigs, jamRigs, rigId } = await import('../js/tree.js');
+  const base = { hardware: config.hardware, rigs: { min: 1, max: 2, excluded: [], custom: [] } };
+  const all = allJamRigs(base);
+  // Jam-capable instruments: p6, tr8, sp404, nord (pedal excluded). Singles need a lead device.
+  const ids = all.map((r) => r.id).sort();
+  assert.deepEqual(ids, ['nord', 'nord+p6', 'nord+sp404', 'nord+tr8', 'p6', 'p6+sp404', 'p6+tr8'].sort());
+  assert.ok(!ids.includes('tr8'), 'a drum machine alone is not a synth jam');
+  assert.ok(!ids.includes('sp404+tr8'), 'two rhythm boxes without a lead are not a synth jam');
+  const withRules = {
+    ...base,
+    rigs: {
+      min: 1,
+      max: 2,
+      excluded: ['p6+tr8'],
+      custom: [{ id: rigId(['sp404', 'tr8']), devices: ['sp404', 'tr8'] }],
+    },
+  };
+  const usable = jamRigs(withRules).map((r) => r.id);
+  assert.ok(!usable.includes('p6+tr8'), 'excluded rig is gone');
+  assert.ok(usable.includes('sp404+tr8'), 'custom rig is allowed even without a lead');
+  assert.equal(allJamRigs(withRules).find((r) => r.id === 'p6+tr8').excluded, true);
+  const three = allJamRigs({ ...base, rigs: { min: 3, max: 3, excluded: [], custom: [] } }).map((r) => r.id);
+  assert.deepEqual(three.sort(), ['nord+p6+sp404', 'nord+p6+tr8', 'nord+sp404+tr8', 'p6+sp404+tr8'].sort());
+});
+
+test('synth jams name every device in the rig', () => {
+  const rng = makeRng(53);
+  const cfg = { ...config, rigs: { min: 2, max: 3, excluded: [], custom: [] } };
+  let sawThree = false;
+  for (let i = 0; i < 200; i++) {
+    const r = generateSession({
+      locks: { category: 'jamming', jamType: 'synth' },
+      config: cfg,
+      rng,
+      withConstraint: true,
+    });
+    assert.match(r.prompt, /^Synth jam on the .+ with the .+\. No goal/);
+    assert.equal(r.selections[DEVICE_DECISION], undefined, 'single-device pick is not used for synth jams');
+    const count = r.selections.rig.split('+').length;
+    if (count === 3) {
+      sawThree = true;
+      assert.match(r.prompt, /with the .+ and the .+\./);
+    }
+    assert.ok(r.detail.length >= 1 + count);
+  }
+  assert.ok(sawThree);
+  const single = generateSession({
+    locks: { category: 'jamming', jamType: 'synth', rig: 'p6' },
+    config: { ...config, rigs: { min: 1, max: 1, excluded: [], custom: [] } },
+    rng,
+  });
+  assert.match(single.prompt, /^Synth jam on the Prophet-6\./);
+  const none = generateSession({ locks: { category: 'jamming', jamType: 'synth' }, config: {}, rng });
+  assert.match(none.prompt, /^Synth jam on any synth\./);
+});
+
+test('constraint scopes tell drum loops from drum kits and presets from each other', () => {
+  const sel = (extra) => ({ category: 'assets', ...extra });
+  assert.equal(matchesScope('drumloop', sel({ assetType: 'loop', loopKind: 'drums' })), true);
+  assert.equal(matchesScope('drumkit', sel({ assetType: 'loop', loopKind: 'drums' })), false);
+  assert.equal(matchesScope('drumkit', sel({ assetType: 'sound', soundKind: 'drumkit' })), true);
+  assert.equal(matchesScope('drumloop', sel({ assetType: 'sound', soundKind: 'drumkit' })), false);
+  assert.equal(
+    matchesScope('instpreset', sel({ assetType: 'sound', soundKind: 'preset', presetKind: 'instrument' })),
+    true,
+  );
+  assert.equal(
+    matchesScope('fxpreset', sel({ assetType: 'sound', soundKind: 'preset', presetKind: 'instrument' })),
+    false,
+  );
+  assert.equal(matchesScope('fxpreset', sel({ assetType: 'sound', soundKind: 'preset', presetKind: 'effect' })), true);
+  assert.equal(matchesScope('oneshot', sel({ assetType: 'sound', soundKind: 'oneshot' })), true);
+  assert.equal(matchesScope('rig', { category: 'jamming', jamType: 'synth', rig: 'nord+p6' }), true);
+  assert.equal(matchesScope('rig', { category: 'jamming', jamType: 'synth', rig: 'p6' }), false);
+  const scopes = new Set(BUILT_IN_CONSTRAINTS.map((c) => c.scope));
+  for (const s of ['drumloop', 'drumkit', 'instpreset', 'fxpreset', 'oneshot', 'rig']) assert.ok(scopes.has(s), s);
+  assert.ok(!scopes.has('drums'), 'old combined scope is gone');
+});

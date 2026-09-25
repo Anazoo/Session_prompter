@@ -1,4 +1,12 @@
-import { generateSession, isApplicable, isCompatible, optionWeight, pickConstraint, pruneLocks } from './engine.js';
+import {
+  generateSession,
+  isApplicable,
+  isCompatible,
+  optionWeight,
+  pickConstraint,
+  pruneLocks,
+  weightedPick,
+} from './engine.js';
 import { BUILT_IN_CONSTRAINTS, SCOPES } from './constraints.js';
 import {
   DEFAULT_WEIGHT,
@@ -7,11 +15,16 @@ import {
   DEVICE_TYPE_IDS,
   FX_DECISION,
   FX_NONE,
+  RIG_DECISION,
+  RIG_MAX_SIZE,
   SOFTWARE_DECISION,
   STATIC_DECISIONS,
   TRACK_DECISION,
+  allJamRigs,
   buildDecisions,
   findDecision,
+  jamDevices,
+  rigId,
 } from './tree.js';
 import { DEFAULT_SETTINGS, loadSettings, normalizeSettings, saveSettings, uid } from './store.js';
 import { SessionTimer, formatClock } from './timer.js';
@@ -417,6 +430,30 @@ function rollLikeEntry(entry) {
   showToast('Choices loaded. Roll when ready.');
 }
 
+/** Swap the effects twist for another effect that fits, keeping everything else. */
+function rerollTwist() {
+  const r = state.result;
+  if (!r) return;
+  const decisions = currentDecisions();
+  const fx = findDecision(decisions, FX_DECISION);
+  const current = r.selections?.[FX_DECISION];
+  const used = new Set([r.selections?.[DEVICE_DECISION], r.selections?.[SOFTWARE_DECISION], current]);
+  const candidates = (fx?.options || []).filter((o) => o.id !== FX_NONE && !used.has(o.id));
+  const pick =
+    weightedPick(candidates, (o) => optionWeight(fx, o, state.settings.weights)) || weightedPick(candidates, () => 1);
+  if (!pick) {
+    showToast('No other effect to twist with. Add more in Settings.');
+    return;
+  }
+  state.result = {
+    ...r,
+    selections: { ...r.selections, [FX_DECISION]: pick.id },
+    twist: `Twist: run something through the ${pick.label}.`,
+  };
+  persistSession();
+  render();
+}
+
 async function exportBackup() {
   const entries = state.journal.loaded ? state.journal.entries : await listEntries().catch(() => []);
   const backup = makeBackup(state.settings, entries);
@@ -541,7 +578,7 @@ function renderResult() {
     <section class="card result">
       <p class="eyebrow">${esc(r.categoryLabel)} · ${esc(r.title)}</p>
       <h2 class="prompt">${esc(r.prompt)}</h2>
-      ${r.twist ? `<p class="twist">${esc(r.twist)}</p>` : ''}
+      ${r.twist ? `<p class="twist">${esc(r.twist)} <button type="button" class="link" data-action="new-twist" aria-label="Pick a different effect">↻ different twist</button></p>` : ''}
       ${r.constraint ? `<p class="constraint">Constraint: ${esc(r.constraint)} <button type="button" class="link" data-action="new-constraint" aria-label="Pick a different rule">↻ different rule</button></p>` : ''}
       <ul class="chips">${tags.join('')}</ul>
       ${previous ? `<p class="last-done">Last ${esc(r.title.toLowerCase())} session: ${timeAgo(previous.createdAt)}.</p>` : ''}
@@ -614,6 +651,7 @@ function renderBuilder() {
   const rows = [];
   const hints = {
     [DEVICE_DECISION]: 'from your hardware list',
+    [RIG_DECISION]: 'combos set under Settings',
     [SOFTWARE_DECISION]: 'from your software list',
     [TRACK_DECISION]: 'from your track list',
     [FX_DECISION]: 'optional',
@@ -841,6 +879,81 @@ function renderGearSection(kind) {
   `;
 }
 
+function renderRigSection() {
+  const s = state.settings;
+  const devices = jamDevices(s.hardware);
+  if (!devices.length) {
+    return `
+    <section class="card">
+      <h2>Jam rigs</h2>
+      <p class="muted">Add hardware instruments above and synth jams can suggest one device or a combination of them.</p>
+    </section>`;
+  }
+  const rigs = allJamRigs(s);
+  const generated = rigs.filter((r) => !r.custom);
+  const custom = rigs.filter((r) => r.custom);
+  const sizes = [...new Set(generated.map((r) => r.devices.length))].sort();
+  const sizeSelect = (key) =>
+    `<select data-action="rig-size" data-key="${key}" aria-label="${key === 'min' ? 'Fewest' : 'Most'} devices per jam">${[
+      1, 2, 3, 4,
+    ]
+      .slice(0, RIG_MAX_SIZE)
+      .map((n) => `<option value="${n}" ${s.rigs[key] === n ? 'selected' : ''}>${n}</option>`)
+      .join('')}</select>`;
+  const groups = sizes
+    .map(
+      (size) => `
+      <h3>${size === 1 ? 'Single device' : `${size} devices`}<span class="path">${generated.filter((r) => r.devices.length === size && !r.excluded).length} of ${generated.filter((r) => r.devices.length === size).length} on</span></h3>
+      ${generated
+        .filter((r) => r.devices.length === size)
+        .map(
+          (r) => `
+        <div class="field">
+          <span class="label constraint-text">${esc(r.label)}</span>
+          <label class="switch"><input type="checkbox" data-action="toggle-rig" data-id="${esc(r.id)}" ${r.excluded ? '' : 'checked'} aria-label="Allow ${esc(r.label)}"><span></span></label>
+        </div>`,
+        )
+        .join('')}`,
+    )
+    .join('');
+  const customList = custom.length
+    ? `<ul class="list">${custom
+        .map(
+          (r) => `
+        <li data-id="${esc(r.id)}">
+          <span class="name">${esc(r.label)}</span>
+          <button class="delete" data-action="remove-rig" data-id="${esc(r.id)}" aria-label="Remove rig ${esc(r.label)}">Remove</button>
+        </li>`,
+        )
+        .join('')}</ul>`
+    : '<p class="empty">No custom rigs. Tick two or more devices below to add a combination outside the generated ones.</p>';
+  return `
+    <section class="card">
+      <h2>Jam rigs</h2>
+      <p class="muted">Synth jams pick one of these combinations. They are generated from your hardware (every combo with at least one synth-type device), and you can switch any of them off or add your own.</p>
+      <div class="field">
+        <span class="label">Devices per jam<span class="sub">Fewest to most</span></span>
+        <span class="range-pair">${sizeSelect('min')}<span class="muted">to</span>${sizeSelect('max')}</span>
+      </div>
+      <h3>Your own rigs</h3>
+      ${customList}
+      <form class="checklist" data-action="add-rig">
+        ${devices
+          .map(
+            (d) =>
+              `<label class="check"><input type="checkbox" name="device" value="${d.id}"> <span>${esc(d.name)}</span></label>`,
+          )
+          .join('')}
+        <button class="btn primary" type="submit">Add rig</button>
+      </form>
+      <details class="built-ins">
+        <summary>Generated combinations (${generated.length})</summary>
+        ${groups}
+      </details>
+    </section>
+  `;
+}
+
 function renderConstraintsSection() {
   const { disabled, custom } = state.settings.constraints;
   const off = new Set(disabled);
@@ -976,6 +1089,7 @@ function renderSettings() {
       </form>
     </section>
 
+    ${renderRigSection()}
     ${renderConstraintsSection()}
 
     <section class="card">
@@ -1127,6 +1241,9 @@ root.addEventListener('click', (event) => {
         if (stars) stars.outerHTML = renderStars(state.logDraft.rating, true);
       }
       break;
+    case 'new-twist':
+      rerollTwist();
+      break;
     case 'new-constraint':
       if (state.result) {
         const picked = pickConstraint(state.settings, state.result.selections, Math.random, state.result.constraintId);
@@ -1138,6 +1255,15 @@ root.addEventListener('click', (event) => {
           showToast('No other rule fits this session.');
         }
       }
+      break;
+    case 'remove-rig':
+      state.settings = {
+        ...state.settings,
+        rigs: { ...state.settings.rigs, custom: state.settings.rigs.custom.filter((r) => r.id !== target.dataset.id) },
+      };
+      persistSettings();
+      state.locks = pruneLocks(currentDecisions(), state.locks);
+      render();
       break;
     case 'remove-constraint':
       state.settings = {
@@ -1192,7 +1318,10 @@ root.addEventListener('click', (event) => {
     }
     case 'remove-gear': {
       const kind = target.dataset.kind;
-      state.settings = { ...state.settings, [kind]: state.settings[kind].filter((h) => h.id !== target.dataset.id) };
+      state.settings = normalizeSettings({
+        ...state.settings,
+        [kind]: state.settings[kind].filter((h) => h.id !== target.dataset.id),
+      });
       persistSettings();
       state.locks = pruneLocks(currentDecisions(), state.locks);
       render();
@@ -1232,7 +1361,7 @@ root.addEventListener('submit', (event) => {
   event.preventDefault();
   const data = new FormData(form);
   const name = String(data.get('name') || data.get('text') || '').trim();
-  if (!name) return;
+  if (!name && form.dataset.action !== 'add-rig') return;
   if (form.dataset.action === 'add-gear') {
     const kind = form.dataset.kind === 'software' ? 'software' : 'hardware';
     const type = DEVICE_TYPE_IDS.includes(data.get('type')) ? data.get('type') : 'other';
@@ -1242,6 +1371,27 @@ root.addEventListener('submit', (event) => {
     };
   } else if (form.dataset.action === 'add-track') {
     state.settings = { ...state.settings, tracks: [...state.settings.tracks, { id: uid(), name }] };
+  } else if (form.dataset.action === 'add-rig') {
+    const devices = [...new Set(data.getAll('device').map(String))];
+    if (devices.length < 2) {
+      showToast('Pick at least two devices for a rig.');
+      return;
+    }
+    const id = rigId(devices);
+    const rigs = state.settings.rigs;
+    const generated = allJamRigs(state.settings).some((r) => r.id === id && !r.custom);
+    state.settings = {
+      ...state.settings,
+      rigs: {
+        ...rigs,
+        excluded: rigs.excluded.filter((x) => x !== id),
+        custom: generated || rigs.custom.some((r) => r.id === id) ? rigs.custom : [...rigs.custom, { id, devices }],
+      },
+    };
+    persistSettings();
+    render();
+    showToast(generated ? 'That combination already exists. It is switched on.' : 'Rig added');
+    return;
   } else if (form.dataset.action === 'add-constraint') {
     const scope = SCOPES[data.get('scope')] ? data.get('scope') : 'any';
     state.settings = {
@@ -1297,6 +1447,32 @@ root.addEventListener('change', (event) => {
       if (el.checked && timer.state.status === 'running') timer.requestWakeLock();
       if (!el.checked) timer.releaseWakeLock();
       break;
+    case 'toggle-rig': {
+      const id = el.dataset.id;
+      const excluded = state.settings.rigs.excluded.filter((x) => x !== id);
+      if (!el.checked) excluded.push(id);
+      state.settings = { ...state.settings, rigs: { ...state.settings.rigs, excluded } };
+      persistSettings();
+      state.locks = pruneLocks(currentDecisions(), state.locks);
+      const h3 = el.closest('.field')?.previousElementSibling;
+      render();
+      document.querySelector('.built-ins')?.setAttribute('open', '');
+      void h3;
+      break;
+    }
+    case 'rig-size': {
+      const value = Math.min(RIG_MAX_SIZE, Math.max(1, Number(el.value) || 1));
+      const rigs = { ...state.settings.rigs, [el.dataset.key]: value };
+      if (rigs.min > rigs.max) {
+        if (el.dataset.key === 'min') rigs.max = rigs.min;
+        else rigs.min = rigs.max;
+      }
+      state.settings = { ...state.settings, rigs };
+      persistSettings();
+      state.locks = pruneLocks(currentDecisions(), state.locks);
+      render();
+      break;
+    }
     case 'toggle-constraints':
       state.settings = {
         ...state.settings,

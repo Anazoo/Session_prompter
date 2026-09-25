@@ -34,8 +34,10 @@ Session type
 │   │   └── Method:     hardware · software · live recording
 │   └── Sound design
 │       ├── Target:     drum kit · preset · one-shot
+│       │   └── Preset type: instrument preset · effect preset
 │       └── Method:     hardware · software · live recording (one-shot only)
 ├── Jamming:            synth jam · piano jam · other
+│   └── Synth jam:      a jam rig, one device or a combination of your hardware
 └── Working on tracks
     ├── Existing track  (optionally picked from your tracks-in-progress list)
     └── New track
@@ -53,12 +55,23 @@ something through one of them.
 
 For "software" loops and sound design the same happens with your software
 list: a synth plugin gets pads and presets, a drum plugin gets drum loops.
-Effects from either list feed the twist.
+Effects from either list feed the twist, and they are the only devices that
+can be the target of an **effect preset** ("Design an effect preset on the
+Microcosm"). The effect you are designing on is never also the twist, and
+"different twist" on the result swaps the twist for another effect.
+
+**Synth jams** pick a **jam rig**: one device or a combination of your
+hardware. Settings → Jam rigs sets how many devices a jam may use (1 to 4),
+lists every generated combination with an on/off switch, and lets you add
+combinations of your own. A generated combination always contains at least one
+synth-type device (synth, groovebox, keys or other instrument); a custom rig
+can be anything.
 
 A **Creative constraint** switch in the session builder decides whether a roll
-also gets an extra rule. The app picks one that fits the session: drum rules
-only for drum loops and kits, melodic rules for pads, chords and melodies, and
-so on. Tap "different rule" on the result to swap it. The switch is remembered
+also gets an extra rule. The app picks one that fits the session: drum-loop
+rules for drum loops, drum-kit rules for kits, separate rules for instrument
+and effect presets, one-shots, melodic loops, jams, multi-device rigs and
+tracks. Tap "different rule" on the result to swap it. The switch is remembered
 between sessions. The built-in pool lives in `js/constraints.js`; Settings lets
 you switch any rule off and add your own with a scope.
 
@@ -125,6 +138,8 @@ the app asks the browser for persistent storage on the first save.
 - **Hardware** and **Software**: name, type (synth, drum machine, sampler,
   groovebox, keys/piano, effects/pedal, other) and a weight from 0 to 10 for how
   often it gets picked.
+- **Jam rigs**: devices per synth jam, switches for each generated
+  combination, and your own combinations.
 - **Tracks in progress**: optional list used by "Existing track" sessions.
 - **Creative constraints**: your own rules with a scope, and on/off switches
   for the built-in ones.

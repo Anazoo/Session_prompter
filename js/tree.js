@@ -13,9 +13,11 @@ export const DEFAULT_WEIGHT = 5;
 export const DEVICE_TYPES = {
   synth: {
     label: 'Synth',
+    jam: true,
     requires: {
       loopKind: ['pad', 'chords', 'melodic', 'soundscape'],
       soundKind: ['preset', 'oneshot', 'drumkit'],
+      presetKind: ['instrument'],
       jamType: ['synth'],
     },
   },
@@ -36,26 +38,40 @@ export const DEVICE_TYPES = {
   },
   groovebox: {
     label: 'Groovebox',
+    jam: true,
     requires: {
+      presetKind: ['instrument'],
       jamType: ['synth'],
     },
   },
   keys: {
     label: 'Keys / piano',
+    jam: true,
     requires: {
       loopKind: ['pad', 'chords', 'melodic'],
       soundKind: ['preset'],
+      presetKind: ['instrument'],
       jamType: ['piano', 'synth'],
     },
   },
   fx: {
     label: 'Effects / pedal',
     role: 'fx',
-    requires: {},
+    // Effects only ever star in one place: designing an effect preset.
+    requires: {
+      loopMethod: [],
+      loopKind: [],
+      soundKind: ['preset'],
+      presetKind: ['effect'],
+      jamType: [],
+      startPoint: [],
+    },
   },
   other: {
     label: 'Other instrument',
+    jam: true,
     requires: {
+      presetKind: ['instrument'],
       jamType: ['synth'],
     },
   },
@@ -116,6 +132,15 @@ export const STATIC_DECISIONS = [
     ],
   },
   {
+    id: 'presetKind',
+    label: 'Preset type',
+    parent: ['soundKind', 'preset'],
+    options: [
+      { id: 'instrument', label: 'Instrument preset' },
+      { id: 'effect', label: 'Effect preset' },
+    ],
+  },
+  {
     id: 'soundMethod',
     label: 'Method',
     parent: ['assetType', 'sound'],
@@ -172,6 +197,7 @@ export const STATIC_DECISIONS = [
 
 // Ids of the decisions that are generated from user lists (hardware, software, tracks).
 export const DEVICE_DECISION = 'device';
+export const RIG_DECISION = 'rig';
 export const SOFTWARE_DECISION = 'software';
 export const TRACK_DECISION = 'track';
 export const FX_DECISION = 'fxTwist';
@@ -181,9 +207,72 @@ const HARDWARE_CONTEXTS = [
   ['loopMethod', 'hardware'],
   ['soundMethod', 'hardware'],
   ['startPoint', 'hardware'],
-  ['jamType', 'synth'],
   ['jamType', 'piano'],
 ];
+
+export const RIG_MAX_SIZE = 4;
+
+/** Devices that can carry a synth jam. */
+export function jamDevices(hardware = []) {
+  return hardware.filter((h) => DEVICE_TYPES[h.type] && DEVICE_TYPES[h.type].role !== 'fx');
+}
+
+function combinations(items, size) {
+  if (size === 0) return [[]];
+  if (items.length < size) return [];
+  const [first, ...rest] = items;
+  return [...combinations(rest, size - 1).map((c) => [first, ...c]), ...combinations(rest, size)];
+}
+
+export function rigId(deviceIds) {
+  return [...deviceIds].sort().join('+');
+}
+
+/**
+ * Every hardware jam rig: generated combinations within the size range plus custom rigs,
+ * each flagged with whether the user switched it off.
+ * @returns {Array<{id: string, devices: object[], label: string, weight: number, custom: boolean, excluded: boolean}>}
+ */
+export function allJamRigs(config = {}) {
+  const hardware = config.hardware || [];
+  const rigs = config.rigs || {};
+  const min = Math.max(1, Math.min(RIG_MAX_SIZE, rigs.min ?? 1));
+  const max = Math.max(min, Math.min(RIG_MAX_SIZE, rigs.max ?? 2));
+  const excluded = new Set(rigs.excluded || []);
+  const byId = new Map(hardware.map((h) => [h.id, h]));
+  const pool = jamDevices(hardware);
+  const seen = new Set();
+  const out = [];
+  const push = (devices, custom) => {
+    const id = rigId(devices.map((d) => d.id));
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    out.push({
+      id,
+      devices,
+      label: devices.map((d) => d.name).join(' + '),
+      weight: Math.round(devices.reduce((sum, d) => sum + (d.weight ?? DEFAULT_WEIGHT), 0) / devices.length),
+      custom,
+      excluded: excluded.has(id),
+    });
+  };
+  for (let size = min; size <= max; size++) {
+    for (const combo of combinations(pool, size)) {
+      // A synth jam needs at least one device that can lead it.
+      if (combo.some((d) => DEVICE_TYPES[d.type]?.jam)) push(combo, false);
+    }
+  }
+  for (const rig of rigs.custom || []) {
+    const devices = (rig.devices || []).map((id) => byId.get(id)).filter(Boolean);
+    if (devices.length) push(devices, true);
+  }
+  return out;
+}
+
+/** The rigs that can actually be rolled. */
+export function jamRigs(config = {}) {
+  return allJamRigs(config).filter((r) => !r.excluded);
+}
 
 const SOFTWARE_CONTEXTS = [
   ['loopMethod', 'software'],
@@ -210,19 +299,30 @@ export function buildDecisions(config = {}) {
   const tracks = config.tracks || [];
   const decisions = [...STATIC_DECISIONS];
 
-  const instruments = hardware.filter((h) => DEVICE_TYPES[h.type]?.role !== 'fx');
-  if (instruments.length) {
+  if (hardware.length) {
     decisions.push({
       id: DEVICE_DECISION,
       label: 'Gear',
       dynamic: true,
       optional: true,
       anyOf: HARDWARE_CONTEXTS,
-      options: instruments.map(toOption),
+      options: hardware.map(toOption),
     });
   }
 
-  const plugins = software.filter((h) => DEVICE_TYPES[h.type]?.role !== 'fx');
+  const rigs = jamRigs(config);
+  if (rigs.length) {
+    decisions.push({
+      id: RIG_DECISION,
+      label: 'Jam rig',
+      dynamic: true,
+      optional: true,
+      parent: ['jamType', 'synth'],
+      options: rigs.map((r) => ({ id: r.id, label: r.label, weight: r.weight, devices: r.devices.map((d) => d.id) })),
+    });
+  }
+
+  const plugins = software;
   if (plugins.length) {
     decisions.push({
       id: SOFTWARE_DECISION,

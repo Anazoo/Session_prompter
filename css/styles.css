@@ -1037,3 +1037,48 @@ textarea {
   margin-left: 2px;
   white-space: nowrap;
 }
+
+/* Jam rigs */
+.range-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.range-pair select {
+  min-height: 40px;
+  padding: 6px 30px 6px 12px;
+}
+
+.checklist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  align-items: center;
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.check input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.check:has(input:checked) {
+  border-color: var(--accent);
+}
