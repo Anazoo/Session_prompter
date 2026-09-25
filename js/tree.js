@@ -16,7 +16,7 @@ export const DEVICE_TYPES = {
     jam: true,
     requires: {
       loopKind: ['pad', 'chords', 'melodic', 'soundscape'],
-      soundKind: ['preset', 'oneshot', 'drumkit'],
+      soundKind: ['preset', 'oneshot'],
       presetKind: ['instrument'],
       jamType: ['synth'],
     },
@@ -32,7 +32,7 @@ export const DEVICE_TYPES = {
   sampler: {
     label: 'Sampler',
     requires: {
-      soundKind: ['drumkit', 'oneshot'],
+      soundKind: ['oneshot'],
       jamType: [],
     },
   },
