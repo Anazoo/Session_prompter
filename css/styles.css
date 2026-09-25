@@ -946,3 +946,94 @@ textarea {
 .error {
   color: var(--danger);
 }
+
+/* Constraints and ratings */
+.constraint {
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--accent-strong);
+}
+
+.stars {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: 4px 0 6px;
+}
+
+.star {
+  font-size: 22px;
+  line-height: 1;
+  color: var(--border);
+}
+
+.stars.interactive .star {
+  font-size: 32px;
+  min-width: 40px;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  transition: transform 0.05s;
+}
+
+.stars.interactive .star:active {
+  transform: scale(1.15);
+}
+
+.star.on {
+  color: #f5b301;
+}
+
+.star-label {
+  margin-left: 8px;
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.constraint-text {
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.built-ins {
+  margin-top: 16px;
+}
+
+.built-ins summary {
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 14px;
+  padding: 8px 0;
+}
+
+.built-ins .field {
+  padding: 8px 0;
+}
+
+.list .name .sub {
+  display: block;
+  font-weight: 500;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.toggle-row {
+  margin-top: 6px;
+  border-top: 1px solid var(--border);
+  border-bottom: 0;
+}
+
+.link {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  padding: 4px 6px;
+  margin-left: 2px;
+  white-space: nowrap;
+}
