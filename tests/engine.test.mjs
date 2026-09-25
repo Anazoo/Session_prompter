@@ -291,3 +291,36 @@ test('effects twist can be locked off or on', () => {
   const jam = generateSession({ locks: { category: 'jamming', [FX_DECISION]: 'micro' }, config, rng });
   assert.equal(jam.twist, undefined, 'twists do not apply to jams');
 });
+
+test('software list names plugins for software sessions only', () => {
+  const rng = makeRng(31);
+  const withSoftware = {
+    ...config,
+    software: [
+      { id: 'serum', name: 'Serum', type: 'synth', weight: 5 },
+      { id: 'valhalla', name: 'Valhalla', type: 'fx', weight: 5 },
+    ],
+  };
+  for (let i = 0; i < 100; i++) {
+    const soft = generateSession({
+      locks: { category: 'assets', assetType: 'loop', loopKind: 'pad', loopMethod: 'software' },
+      config: withSoftware,
+      rng,
+    });
+    assert.match(soft.prompt, /in Serum\.$/);
+    assert.equal(soft.selections[DEVICE_DECISION], undefined);
+    const hard = generateSession({
+      locks: { category: 'assets', assetType: 'loop', loopMethod: 'hardware' },
+      config: withSoftware,
+      rng,
+    });
+    assert.equal(hard.selections.software, undefined);
+    if (hard.twist) assert.match(hard.twist, /Microcosm|Valhalla/);
+  }
+  const drums = generateSession({
+    locks: { category: 'assets', assetType: 'loop', loopKind: 'drums', loopMethod: 'software' },
+    config: withSoftware,
+    rng,
+  });
+  assert.match(drums.prompt, /in the box \(software\)\.$/, 'a synth plugin is not offered for drum loops');
+});

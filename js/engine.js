@@ -5,6 +5,7 @@ import {
   DEVICE_TYPES,
   FX_DECISION,
   FX_NONE,
+  SOFTWARE_DECISION,
   TRACK_DECISION,
   buildDecisions,
   findDecision,
@@ -154,12 +155,16 @@ export function generateSession({ locks = {}, weights = {}, config = {}, rng = M
   const sel = result.selections;
   const decisions = buildDecisions(config);
   const hardware = config.hardware || [];
+  const software = config.software || [];
   const tracks = config.tracks || [];
 
   const device = hardware.find((h) => h.id === sel[DEVICE_DECISION]) || null;
+  const plugin = software.find((h) => h.id === sel[SOFTWARE_DECISION]) || null;
   const track = tracks.find((t) => t.id === sel[TRACK_DECISION]) || null;
   const pedal =
-    sel[FX_DECISION] && sel[FX_DECISION] !== FX_NONE ? hardware.find((h) => h.id === sel[FX_DECISION]) : null;
+    sel[FX_DECISION] && sel[FX_DECISION] !== FX_NONE
+      ? [...hardware, ...software].find((h) => h.id === sel[FX_DECISION])
+      : null;
 
   if (sel.startPoint === 'bpmsig') {
     const range = config.bpm || { min: 70, max: 160 };
@@ -174,7 +179,7 @@ export function generateSession({ locks = {}, weights = {}, config = {}, rng = M
       case 'hardware':
         return onDevice('on hardware');
       case 'software':
-        return 'in the box (software)';
+        return plugin ? `in ${plugin.name}` : 'in the box (software)';
       case 'live':
         return 'from a live recording';
       default:
@@ -240,6 +245,7 @@ export function generateSession({ locks = {}, weights = {}, config = {}, rng = M
   }
 
   if (device && !detail.includes(device.name)) detail.push(device.name);
+  if (plugin && !detail.includes(plugin.name)) detail.push(plugin.name);
   if (track && !detail.includes(track.name)) detail.push(track.name);
   if (pedal) result.twist = `Twist: run something through the ${pedal.name}.`;
 

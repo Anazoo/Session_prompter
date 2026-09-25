@@ -8,10 +8,14 @@ actually do it.
 - Every choice in the tree can be **locked by hand or left to chance**. Lock the
   parts you already know, leave the rest on Random, and the app fills in the gaps.
 - **Weighted probabilities** for every option, adjustable in Settings.
-- A **hardware list** so prompts name your actual gear ("Create a pad loop on
-  the Prophet-6").
+- **Hardware and software lists** so prompts name your actual gear ("Create a
+  pad loop on the Prophet-6", "Design a preset in Serum").
 - A **countdown timer** (60 minutes by default) with a chime, a screen wake lock,
   and state that survives reloads.
+- A **journal**: log each finished session with notes on what you made and an
+  optional audio clip (pick a bounce from Files or record straight from the mic).
+  Shows totals per session type and when you last did each one.
+- **Backup export and import** of settings, gear lists, tracks and journal notes.
 - Installable on **iPhone** as a home-screen app; works offline.
 
 No build step, no dependencies. Plain HTML, CSS and ES modules.
@@ -43,6 +47,10 @@ presets, and so on. If you own effects units or pedals, sessions that create
 assets or work on tracks may get an optional **"twist"** line telling you to run
 something through one of them.
 
+For "software" loops and sound design the same happens with your software
+list: a synth plugin gets pads and presets, a drum plugin gets drum loops.
+Effects from either list feed the twist.
+
 Locks are validated against each other. Lock "Live recording" for sound design
 and the target becomes a one-shot; lock a drum machine and the loop type becomes
 a drum loop. Incompatible chips are greyed out.
@@ -69,8 +77,10 @@ The easiest host is GitHub Pages:
 3. On the iPhone, open that URL in **Safari**, tap **Share → Add to Home
    Screen**. Launch it from the home screen for the full-screen version.
 
-Settings, hardware, tracks, the last generated session and a running timer are
-all stored on the device (localStorage). Nothing leaves the phone.
+Settings, gear, tracks, the last generated session and a running timer are
+stored in localStorage; the journal (notes and audio clips) lives in IndexedDB.
+Nothing leaves the phone. Use **Settings → Backup** to export a JSON file you
+can import on another device; audio clips are not included in the file.
 
 ### iOS notes
 
@@ -83,17 +93,33 @@ all stored on the device (localStorage). Nothing leaves the phone.
   the timer. On iOS 17+ it also asks for the "playback" audio session so it can
   play with the mute switch on.
 
+## Logging a session
+
+When the timer ends (or you tap "End & log" early) the app opens a log form
+with the prompt and the time actually worked. Add notes, attach a clip with
+"Choose file" (Files, Voice Memos exports, a bounce from your DAW) or tap
+"Record" to capture straight from the microphone, then save. Sessions run
+without the timer can be logged from the result card. The Journal tab lists
+everything with playback, editing, deletion and "Roll this again", which
+reloads that session's choices as locks.
+
+Clips are capped at 100 MB each. iOS may evict site data from Safari after a
+week without use; the installed home-screen app is exempt from that rule, and
+the app asks the browser for persistent storage on the first save.
+
 ## Settings
 
 - **Timer**: session length in minutes (presets for 25, 45, 60, 90), keep screen
   awake, chime on/off.
-- **Hardware**: name, type (synth, drum machine, sampler, groovebox, keys/piano,
-  effects/pedal, other) and a weight from 0 to 10 for how often it gets picked.
+- **Hardware** and **Software**: name, type (synth, drum machine, sampler,
+  groovebox, keys/piano, effects/pedal, other) and a weight from 0 to 10 for how
+  often it gets picked.
 - **Tracks in progress**: optional list used by "Existing track" sessions.
 - **Probabilities**: a 0–10 weight per option in every group, shown with the
   resulting percentage. 0 removes an option from random rolls but you can still
   lock it by hand. Includes the time-signature weights, the "no twist" weight for
   effects, and the BPM range.
+- **Backup**: export or import a JSON backup (settings plus journal notes).
 
 ## Project layout
 
@@ -106,8 +132,9 @@ js/tree.js               the decision tree and device-type rules
 js/engine.js             weighted resolution, constraints, prompt text
 js/store.js              settings persistence and validation
 js/timer.js              countdown timer, wake lock, chime
+js/journal.js            IndexedDB journal, stats, backup format
 js/app.js                UI
-tests/engine.test.mjs    engine tests
+tests/                   engine and journal tests
 scripts/serve.mjs        tiny static server for development
 scripts/make_icons.py    icon generator (no image libraries needed)
 ```

@@ -8,6 +8,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // decisionId -> optionId -> weight (0..10). Missing entries use the tree defaults.
   weights: {},
   hardware: [],
+  software: [],
   tracks: [],
   bpm: { min: 70, max: 160 },
   timer: { minutes: 60, keepAwake: true, chime: true },
@@ -37,14 +38,17 @@ export function normalizeSettings(raw) {
     }
   }
 
-  const hardware = (Array.isArray(raw.hardware) ? raw.hardware : [])
-    .filter((h) => h && typeof h.name === 'string' && h.name.trim())
-    .map((h) => ({
-      id: typeof h.id === 'string' && h.id ? h.id : uid(),
-      name: h.name.trim().slice(0, 60),
-      type: DEVICE_TYPE_IDS.includes(h.type) ? h.type : 'other',
-      weight: clampInt(h.weight, 0, 10, DEFAULT_WEIGHT),
-    }));
+  const gearList = (list) =>
+    (Array.isArray(list) ? list : [])
+      .filter((h) => h && typeof h.name === 'string' && h.name.trim())
+      .map((h) => ({
+        id: typeof h.id === 'string' && h.id ? h.id : uid(),
+        name: h.name.trim().slice(0, 60),
+        type: DEVICE_TYPE_IDS.includes(h.type) ? h.type : 'other',
+        weight: clampInt(h.weight, 0, 10, DEFAULT_WEIGHT),
+      }));
+  const hardware = gearList(raw.hardware);
+  const software = gearList(raw.software);
 
   const tracks = (Array.isArray(raw.tracks) ? raw.tracks : [])
     .filter((t) => t && typeof t.name === 'string' && t.name.trim())
@@ -57,6 +61,7 @@ export function normalizeSettings(raw) {
     version: 1,
     weights,
     hardware,
+    software,
     tracks,
     bpm: { min: Math.min(bpmMin, bpmMax), max: Math.max(bpmMin, bpmMax) },
     timer: {
