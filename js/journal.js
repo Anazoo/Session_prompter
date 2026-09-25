@@ -102,6 +102,8 @@ export function makeEntry(session, extra = {}) {
     detail: Array.isArray(session.detail) ? [...session.detail] : [],
     selections: { ...(session.selections || {}) },
     bpm: session.bpm ?? null,
+    constraint: session.constraint || '',
+    rating: Number.isInteger(extra.rating) && extra.rating >= 1 && extra.rating <= 5 ? extra.rating : null,
     notes: (extra.notes || '').trim(),
     audio: extra.audio || null, // { name, type, size, blob, durationSec? }
   };
@@ -116,13 +118,15 @@ export function summarize(entries) {
     const key = e.categoryLabel || 'Other';
     byCategory[key] = (byCategory[key] || 0) + 1;
   }
+  const rated = entries.filter((e) => e.rating);
+  const avgRating = rated.length ? rated.reduce((sum, e) => sum + e.rating, 0) / rated.length : null;
   const last = entries[0] || null;
   const lastByCategory = {};
   for (const e of entries) {
     const key = e.categoryLabel || 'Other';
     if (!lastByCategory[key] || e.createdAt > lastByCategory[key]) lastByCategory[key] = e.createdAt;
   }
-  return { count: entries.length, totalMs, byCategory, lastByCategory, last };
+  return { count: entries.length, totalMs, byCategory, lastByCategory, last, avgRating, ratedCount: rated.length };
 }
 
 export function formatDuration(ms) {
@@ -179,6 +183,8 @@ export function parseBackup(data) {
       detail: Array.isArray(e.detail) ? e.detail.map(String) : [],
       selections: e.selections && typeof e.selections === 'object' ? e.selections : {},
       bpm: Number.isFinite(e.bpm) ? e.bpm : null,
+      constraint: String(e.constraint || ''),
+      rating: Number.isInteger(e.rating) && e.rating >= 1 && e.rating <= 5 ? e.rating : null,
       notes: String(e.notes || ''),
       // The clip itself never travels in a backup; keep its name so the journal can say so.
       audio:

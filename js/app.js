@@ -1,5 +1,7 @@
 import { generateSession, isApplicable, isCompatible, optionWeight, pruneLocks } from './engine.js';
+import { BUILT_IN_CONSTRAINTS, SCOPES } from './constraints.js';
 import {
+  CONSTRAINT_DECISION,
   DEFAULT_WEIGHT,
   DEVICE_DECISION,
   DEVICE_TYPES,
@@ -255,6 +257,7 @@ function openLogDraft({ fromTimer }) {
     elapsedMs: fromTimer ? timer.elapsedMs : null,
     plannedMs: fromTimer ? timer.state.durationMs : state.settings.timer.minutes * 60 * 1000,
     notes: '',
+    rating: null,
     audio: null,
     entryId: null,
   };
@@ -272,6 +275,7 @@ function openEditDraft(entry) {
     elapsedMs: entry.elapsedMs,
     plannedMs: entry.plannedMs,
     notes: entry.notes || '',
+    rating: entry.rating || null,
     audio: entry.audio || null,
     entryId: entry.id,
     createdAt: entry.createdAt,
@@ -291,6 +295,7 @@ async function saveLogDraft() {
     elapsedMs: d.elapsedMs,
     plannedMs: d.plannedMs,
     notes: d.notes,
+    rating: d.rating,
     audio: d.audio,
   });
   try {
@@ -518,6 +523,7 @@ function renderResult() {
     if (value === undefined) continue;
     if (decision.id === 'category') continue;
     if (decision.id === FX_DECISION && value === FX_NONE) continue;
+    if (decision.id === CONSTRAINT_DECISION) continue;
     const option = decision.options.find((o) => o.id === value);
     if (!option) continue;
     tags.push(
@@ -533,6 +539,7 @@ function renderResult() {
       <p class="eyebrow">${esc(r.categoryLabel)} · ${esc(r.title)}</p>
       <h2 class="prompt">${esc(r.prompt)}</h2>
       ${r.twist ? `<p class="twist">${esc(r.twist)}</p>` : ''}
+      ${r.constraint ? `<p class="constraint">Constraint: ${esc(r.constraint)}</p>` : ''}
       <ul class="chips">${tags.join('')}</ul>
       ${previous ? `<p class="last-done">Last ${esc(r.title.toLowerCase())} session: ${timeAgo(previous.createdAt)}.</p>` : ''}
       ${r.conflicts?.length ? `<p class="notice">${r.conflicts.map(esc).join('<br>')}</p>` : ''}
@@ -607,6 +614,7 @@ function renderBuilder() {
     [SOFTWARE_DECISION]: 'from your software list',
     [TRACK_DECISION]: 'from your track list',
     [FX_DECISION]: 'optional',
+    [CONSTRAINT_DECISION]: 'optional',
   };
   for (const decision of decisions) {
     if (!isApplicable(decision, state.locks)) continue;
@@ -660,7 +668,10 @@ function renderLogForm(d) {
     <section class="card log-form">
       <p class="eyebrow">${d.entryId ? 'Edit session' : 'Log this session'}</p>
       <p class="summary">${esc(s.prompt)}</p>
+      ${s.constraint ? `<p class="constraint">Constraint: ${esc(s.constraint)}</p>` : ''}
       ${meta.length ? `<p class="meta">${meta.join('')}</p>` : ''}
+      <label class="block">How did it go?</label>
+      ${renderStars(d.rating, true)}
       <label class="block" for="log-notes">Notes on what you made</label>
       <textarea id="log-notes" data-action="draft-notes" placeholder="What came out of it? Where did you save it? What is worth coming back to?">${esc(d.notes)}</textarea>
       <label class="block">Audio of the result (optional)</label>
@@ -689,6 +700,20 @@ function renderLogForm(d) {
   `;
 }
 
+const RATING_LABELS = ['', 'Rough', 'Meh', 'Solid', 'Good', 'Keeper'];
+
+function renderStars(rating, interactive) {
+  const stars = [1, 2, 3, 4, 5]
+    .map((n) =>
+      interactive
+        ? `<button type="button" class="star ${rating >= n ? 'on' : ''}" data-action="rate" data-value="${n}" aria-label="${n} star${n > 1 ? 's' : ''}" aria-pressed="${rating === n}">★</button>`
+        : `<span class="star ${rating >= n ? 'on' : ''}">★</span>`,
+    )
+    .join('');
+  const label = rating ? RATING_LABELS[rating] : interactive ? 'Tap to rate' : '';
+  return `<div class="stars ${interactive ? 'interactive' : ''}" role="${interactive ? 'group' : 'img'}" aria-label="${rating ? `${rating} out of 5` : 'Not rated'}">${stars}${label ? `<span class="star-label">${label}</span>` : ''}</div>`;
+}
+
 // ---------- journal view ----------
 
 function renderJournal() {
@@ -705,6 +730,7 @@ function renderJournal() {
       <div class="stats">
         <div class="stat"><div class="value">${stats.count}</div><div class="label">Sessions</div></div>
         <div class="stat"><div class="value">${esc(formatDuration(stats.totalMs))}</div><div class="label">Time logged</div></div>
+        ${stats.avgRating ? `<div class="stat"><div class="value">★ ${stats.avgRating.toFixed(1)}</div><div class="label">Avg rating · ${stats.ratedCount} rated</div></div>` : ''}
       </div>
       ${
         categories.length
@@ -737,7 +763,9 @@ function renderEntry(e) {
       <p class="eyebrow">${esc(e.categoryLabel)}${e.title && e.title !== e.categoryLabel ? ` · ${esc(e.title)}` : ''}</p>
       <p class="prompt">${esc(e.prompt)}</p>
       ${e.twist ? `<p class="twist">${esc(e.twist)}</p>` : ''}
+      ${e.constraint ? `<p class="constraint">Constraint: ${esc(e.constraint)}</p>` : ''}
       <ul class="chips">${chips.join('')}</ul>
+      ${e.rating ? renderStars(e.rating, false) : ''}
       ${e.notes ? `<p class="notes">${esc(e.notes)}</p>` : `<p class="notes muted">No notes.</p>`}
       ${url ? `<audio controls preload="metadata" src="${url}"></audio>` : ''}
       ${e.audio && !url ? `<p class="file-meta muted">Clip "${esc(e.audio.name)}" was not restored with this backup.</p>` : ''}
@@ -803,6 +831,61 @@ function renderGearSection(kind) {
         </select>
         <button class="btn primary" type="submit">Add</button>
       </form>
+    </section>
+  `;
+}
+
+function renderConstraintsSection() {
+  const { disabled, custom } = state.settings.constraints;
+  const off = new Set(disabled);
+  const groups = Object.keys(SCOPES)
+    .map((scope) => {
+      const items = BUILT_IN_CONSTRAINTS.filter((c) => c.scope === scope);
+      if (!items.length) return '';
+      return `
+        <h3>${esc(SCOPES[scope])}</h3>
+        ${items
+          .map(
+            (c) => `
+          <div class="field">
+            <span class="label constraint-text">${esc(c.text)}</span>
+            <label class="switch"><input type="checkbox" data-action="toggle-constraint" data-id="${c.id}" ${off.has(c.id) ? '' : 'checked'} aria-label="Enable: ${esc(c.text)}"><span></span></label>
+          </div>`,
+          )
+          .join('')}`;
+    })
+    .join('');
+  const customList = custom.length
+    ? `<ul class="list">${custom
+        .map(
+          (c) => `
+        <li data-id="${c.id}">
+          <span class="name">${esc(c.text)}<span class="sub">${esc(SCOPES[c.scope] || 'Any session')}</span></span>
+          <button class="delete" data-action="remove-constraint" data-id="${c.id}" aria-label="Remove constraint">Remove</button>
+        </li>`,
+        )
+        .join('')}</ul>`
+    : '';
+  const enabledCount = BUILT_IN_CONSTRAINTS.length - disabled.length + custom.length;
+  return `
+    <section class="card">
+      <h2>Creative constraints</h2>
+      <p class="muted">Optional extra rules rolled on top of a session, matched to what you are doing. ${enabledCount} active. How often one shows up is the "Creative constraint" weight under Probabilities.</p>
+      <h3>Your own</h3>
+      ${customList || '<p class="empty">Add rules of your own below. They join the pool for the session type you pick.</p>'}
+      <form class="add-row" data-action="add-constraint">
+        <input type="text" name="text" placeholder="e.g. Only the white keys" maxlength="160" autocomplete="off" aria-label="Constraint text" required>
+        <select name="scope" aria-label="Applies to">
+          ${Object.entries(SCOPES)
+            .map(([id, label]) => `<option value="${id}">${esc(label)}</option>`)
+            .join('')}
+        </select>
+        <button class="btn primary" type="submit">Add</button>
+      </form>
+      <details class="built-ins">
+        <summary>Built-in rules (${BUILT_IN_CONSTRAINTS.length})</summary>
+        ${groups}
+      </details>
     </section>
   `;
 }
@@ -886,6 +969,8 @@ function renderSettings() {
         <button class="btn primary" type="submit">Add</button>
       </form>
     </section>
+
+    ${renderConstraintsSection()}
 
     <section class="card">
       <h2>Probabilities</h2>
@@ -1027,6 +1112,26 @@ root.addEventListener('click', (event) => {
         render();
       }
       break;
+    case 'rate':
+      if (state.logDraft) {
+        const value = Number(target.dataset.value);
+        state.logDraft.rating = state.logDraft.rating === value ? null : value;
+        const form = target.closest('.log-form');
+        const stars = form?.querySelector('.stars');
+        if (stars) stars.outerHTML = renderStars(state.logDraft.rating, true);
+      }
+      break;
+    case 'remove-constraint':
+      state.settings = {
+        ...state.settings,
+        constraints: {
+          ...state.settings.constraints,
+          custom: state.settings.constraints.custom.filter((c) => c.id !== target.dataset.id),
+        },
+      };
+      persistSettings();
+      render();
+      break;
     case 'start-recording':
       startRecording();
       break;
@@ -1108,7 +1213,7 @@ root.addEventListener('submit', (event) => {
   if (!form) return;
   event.preventDefault();
   const data = new FormData(form);
-  const name = String(data.get('name') || '').trim();
+  const name = String(data.get('name') || data.get('text') || '').trim();
   if (!name) return;
   if (form.dataset.action === 'add-gear') {
     const kind = form.dataset.kind === 'software' ? 'software' : 'hardware';
@@ -1119,6 +1224,15 @@ root.addEventListener('submit', (event) => {
     };
   } else if (form.dataset.action === 'add-track') {
     state.settings = { ...state.settings, tracks: [...state.settings.tracks, { id: uid(), name }] };
+  } else if (form.dataset.action === 'add-constraint') {
+    const scope = SCOPES[data.get('scope')] ? data.get('scope') : 'any';
+    state.settings = {
+      ...state.settings,
+      constraints: {
+        ...state.settings.constraints,
+        custom: [...state.settings.constraints.custom, { id: uid(), text: name.slice(0, 160), scope }],
+      },
+    };
   }
   persistSettings();
   render();
@@ -1165,6 +1279,14 @@ root.addEventListener('change', (event) => {
       if (el.checked && timer.state.status === 'running') timer.requestWakeLock();
       if (!el.checked) timer.releaseWakeLock();
       break;
+    case 'toggle-constraint': {
+      const id = el.dataset.id;
+      const disabled = state.settings.constraints.disabled.filter((d) => d !== id);
+      if (!el.checked) disabled.push(id);
+      state.settings = { ...state.settings, constraints: { ...state.settings.constraints, disabled } };
+      persistSettings();
+      break;
+    }
     case 'toggle-chime':
       state.settings = { ...state.settings, timer: { ...state.settings.timer, chime: el.checked } };
       persistSettings();

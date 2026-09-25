@@ -1,5 +1,6 @@
 // Persistent settings, kept in localStorage.
 import { DEFAULT_WEIGHT, DEVICE_TYPE_IDS } from './tree.js';
+import { SCOPES } from './constraints.js';
 
 export const STORAGE_KEY = 'sessionPrompter.settings.v1';
 
@@ -12,6 +13,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   tracks: [],
   bpm: { min: 70, max: 160 },
   timer: { minutes: 60, keepAwake: true, chime: true },
+  // Built-in constraint ids switched off, plus user-written constraints.
+  constraints: { disabled: [], custom: [] },
 });
 
 export function uid() {
@@ -54,6 +57,17 @@ export function normalizeSettings(raw) {
     .filter((t) => t && typeof t.name === 'string' && t.name.trim())
     .map((t) => ({ id: typeof t.id === 'string' && t.id ? t.id : uid(), name: t.name.trim().slice(0, 80) }));
 
+  const disabled = (Array.isArray(raw.constraints?.disabled) ? raw.constraints.disabled : []).filter(
+    (id) => typeof id === 'string',
+  );
+  const custom = (Array.isArray(raw.constraints?.custom) ? raw.constraints.custom : [])
+    .filter((c) => c && typeof c.text === 'string' && c.text.trim())
+    .map((c) => ({
+      id: typeof c.id === 'string' && c.id ? c.id : uid(),
+      text: c.text.trim().slice(0, 160),
+      scope: SCOPES[c.scope] ? c.scope : 'any',
+    }));
+
   const bpmMin = clampInt(raw.bpm?.min, 20, 300, base.bpm.min);
   const bpmMax = clampInt(raw.bpm?.max, 20, 300, base.bpm.max);
 
@@ -69,6 +83,7 @@ export function normalizeSettings(raw) {
       keepAwake: raw.timer?.keepAwake !== false,
       chime: raw.timer?.chime !== false,
     },
+    constraints: { disabled, custom },
   };
 }
 

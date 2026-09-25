@@ -1,5 +1,7 @@
 // Resolution engine: turns the user's locked choices plus weights into a full session.
+import { constraintPool } from './constraints.js';
 import {
+  CONSTRAINT_DECISION,
   DEFAULT_WEIGHT,
   DEVICE_DECISION,
   DEVICE_TYPES,
@@ -248,6 +250,15 @@ export function generateSession({ locks = {}, weights = {}, config = {}, rng = M
   if (plugin && !detail.includes(plugin.name)) detail.push(plugin.name);
   if (track && !detail.includes(track.name)) detail.push(track.name);
   if (pedal) result.twist = `Twist: run something through the ${pedal.name}.`;
+
+  if (sel[CONSTRAINT_DECISION] === 'add') {
+    const pool = constraintPool(config, sel);
+    const picked = weightedPick(pool, () => 1, rng);
+    if (picked) {
+      result.constraint = picked.text;
+      result.constraintId = picked.id;
+    }
+  }
 
   result.title = title;
   result.prompt = prompt;

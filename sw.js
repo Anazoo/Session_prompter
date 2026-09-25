@@ -1,5 +1,5 @@
 // Service worker: keeps the app usable offline. Network first, cache fallback.
-const CACHE = 'session-prompter-v2';
+const CACHE = 'session-prompter-v3';
 const SHELL = [
   './',
   './index.html',
@@ -11,6 +11,7 @@ const SHELL = [
   './js/store.js',
   './js/timer.js',
   './js/journal.js',
+  './js/constraints.js',
   './icons/icon.svg',
   './icons/icon-192.png',
   './icons/icon-512.png',

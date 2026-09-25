@@ -12,9 +12,13 @@ actually do it.
   pad loop on the Prophet-6", "Design a preset in Serum").
 - A **countdown timer** (60 minutes by default) with a chime, a screen wake lock,
   and state that survives reloads.
-- A **journal**: log each finished session with notes on what you made and an
-  optional audio clip (pick a bounce from Files or record straight from the mic).
-  Shows totals per session type and when you last did each one.
+- A **journal**: log each finished session with a 1 to 5 star rating, notes on
+  what you made and an optional audio clip (pick a bounce from Files or record
+  straight from the mic). Shows totals per session type, your average rating
+  and when you last did each one.
+- A pool of **creative constraints** ("No kick on beat one", "Only three
+  sounds") rolled as an optional extra line, matched to the session type.
+  Switch built-in rules off or add your own.
 - **Backup export and import** of settings, gear lists, tracks and journal notes.
 - Installable on **iPhone** as a home-screen app; works offline.
 
@@ -50,6 +54,13 @@ something through one of them.
 For "software" loops and sound design the same happens with your software
 list: a synth plugin gets pads and presets, a drum plugin gets drum loops.
 Effects from either list feed the twist.
+
+A **creative constraint** decision sits at the end of the tree: "None" or "Add
+one", weighted like anything else (50/50 by default). When one is added, the
+app picks a rule that fits the session: drum rules only for drum loops and
+kits, melodic rules for pads, chords and melodies, and so on. The built-in
+pool lives in `js/constraints.js`; Settings lets you switch any rule off and
+add your own with a scope.
 
 Locks are validated against each other. Lock "Live recording" for sound design
 and the target becomes a one-shot; lock a drum machine and the loop type becomes
@@ -96,7 +107,7 @@ can import on another device; audio clips are not included in the file.
 ## Logging a session
 
 When the timer ends (or you tap "End & log" early) the app opens a log form
-with the prompt and the time actually worked. Add notes, attach a clip with
+with the prompt and the time actually worked. Rate it, add notes, attach a clip with
 "Choose file" (Files, Voice Memos exports, a bounce from your DAW) or tap
 "Record" to capture straight from the microphone, then save. Sessions run
 without the timer can be logged from the result card. The Journal tab lists
@@ -115,6 +126,8 @@ the app asks the browser for persistent storage on the first save.
   groovebox, keys/piano, effects/pedal, other) and a weight from 0 to 10 for how
   often it gets picked.
 - **Tracks in progress**: optional list used by "Existing track" sessions.
+- **Creative constraints**: your own rules with a scope, and on/off switches
+  for the built-in ones.
 - **Probabilities**: a 0–10 weight per option in every group, shown with the
   resulting percentage. 0 removes an option from random rolls but you can still
   lock it by hand. Includes the time-signature weights, the "no twist" weight for
@@ -133,6 +146,7 @@ js/engine.js             weighted resolution, constraints, prompt text
 js/store.js              settings persistence and validation
 js/timer.js              countdown timer, wake lock, chime
 js/journal.js            IndexedDB journal, stats, backup format
+js/constraints.js        creative constraint pool and scope matching
 js/app.js                UI
 tests/                   engine and journal tests
 scripts/serve.mjs        tiny static server for development
