@@ -61,11 +61,13 @@ Microcosm"). The effect you are designing on is never also the twist, and
 "different twist" on the result swaps the twist for another effect.
 
 **Synth jams** pick a **jam rig**: one device or a combination of your
-hardware. Settings → Jam rigs sets how many devices a jam may use (1 to 4),
-lists every generated combination with an on/off switch, and lets you add
-combinations of your own. A generated combination always contains at least one
-synth-type device (synth, groovebox, keys or other instrument); a custom rig
-can be anything.
+hardware, effects and pedals included ("Synth jam on the Prophet-6 with the
+TR-8S, through the Microcosm"). Settings → Jam rigs sets how many devices a
+jam may use (1 to 4), lists every generated combination with an on/off switch,
+and lets you add combinations of your own. A generated combination always
+contains at least one synth-type device (synth, groovebox, keys or other
+instrument); a custom rig can be any mix as long as it has at least one
+instrument.
 
 A **Creative constraint** switch in the session builder decides whether a roll
 also gets an extra rule. The app picks one that fits the session: drum-loop

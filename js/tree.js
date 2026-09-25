@@ -212,9 +212,14 @@ const HARDWARE_CONTEXTS = [
 
 export const RIG_MAX_SIZE = 4;
 
-/** Devices that can carry a synth jam. */
+/** Everything that can be part of a jam rig: instruments, rhythm boxes and effects. */
 export function jamDevices(hardware = []) {
-  return hardware.filter((h) => DEVICE_TYPES[h.type] && DEVICE_TYPES[h.type].role !== 'fx');
+  return hardware.filter((h) => DEVICE_TYPES[h.type]);
+}
+
+/** Can this set of devices be a rig at all? It needs at least one instrument (not only effects). */
+export function isValidRig(devices) {
+  return devices.length > 0 && devices.some((d) => DEVICE_TYPES[d.type]?.role !== 'fx');
 }
 
 function combinations(items, size) {
@@ -264,7 +269,7 @@ export function allJamRigs(config = {}) {
   }
   for (const rig of rigs.custom || []) {
     const devices = (rig.devices || []).map((id) => byId.get(id)).filter(Boolean);
-    if (devices.length) push(devices, true);
+    if (isValidRig(devices)) push(devices, true);
   }
   return out;
 }
