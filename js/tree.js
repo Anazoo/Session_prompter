@@ -170,8 +170,9 @@ export const STATIC_DECISIONS = [
   },
 ];
 
-// Ids of the decisions that are generated from user lists (hardware, tracks).
+// Ids of the decisions that are generated from user lists (hardware, software, tracks).
 export const DEVICE_DECISION = 'device';
+export const SOFTWARE_DECISION = 'software';
 export const TRACK_DECISION = 'track';
 export const FX_DECISION = 'fxTwist';
 export const FX_NONE = 'none';
@@ -184,12 +185,28 @@ const HARDWARE_CONTEXTS = [
   ['jamType', 'piano'],
 ];
 
+const SOFTWARE_CONTEXTS = [
+  ['loopMethod', 'software'],
+  ['soundMethod', 'software'],
+];
+
+function toOption(item) {
+  return {
+    id: item.id,
+    label: item.name,
+    weight: item.weight ?? DEFAULT_WEIGHT,
+    requires: DEVICE_TYPES[item.type]?.requires || {},
+    deviceType: item.type,
+  };
+}
+
 /**
  * Build the full ordered decision list for a given configuration.
- * @param {{hardware?: Array<{id:string,name:string,type:string,weight?:number}>, tracks?: Array<{id:string,name:string}>}} config
+ * @param {{hardware?: Array<{id:string,name:string,type:string,weight?:number}>, software?: Array<{id:string,name:string,type:string,weight?:number}>, tracks?: Array<{id:string,name:string}>}} config
  */
 export function buildDecisions(config = {}) {
   const hardware = config.hardware || [];
+  const software = config.software || [];
   const tracks = config.tracks || [];
   const decisions = [...STATIC_DECISIONS];
 
@@ -201,13 +218,19 @@ export function buildDecisions(config = {}) {
       dynamic: true,
       optional: true,
       anyOf: HARDWARE_CONTEXTS,
-      options: instruments.map((h) => ({
-        id: h.id,
-        label: h.name,
-        weight: h.weight ?? DEFAULT_WEIGHT,
-        requires: DEVICE_TYPES[h.type]?.requires || {},
-        deviceType: h.type,
-      })),
+      options: instruments.map(toOption),
+    });
+  }
+
+  const plugins = software.filter((h) => DEVICE_TYPES[h.type]?.role !== 'fx');
+  if (plugins.length) {
+    decisions.push({
+      id: SOFTWARE_DECISION,
+      label: 'Software',
+      dynamic: true,
+      optional: true,
+      anyOf: SOFTWARE_CONTEXTS,
+      options: plugins.map(toOption),
     });
   }
 
@@ -222,21 +245,21 @@ export function buildDecisions(config = {}) {
     });
   }
 
-  const pedals = hardware.filter((h) => DEVICE_TYPES[h.type]?.role === 'fx');
-  if (pedals.length) {
+  const effects = [...hardware, ...software].filter((h) => DEVICE_TYPES[h.type]?.role === 'fx');
+  if (effects.length) {
     decisions.push({
       id: FX_DECISION,
       label: 'Effects twist',
       dynamic: true,
       optional: true,
-      hint: 'An optional extra: run something through one of your pedals or effects units.',
+      hint: 'An optional extra: run something through one of your effects.',
       anyOf: [
         ['category', 'assets'],
         ['category', 'tracks'],
       ],
       options: [
         { id: FX_NONE, label: 'No twist', weight: 10 },
-        ...pedals.map((h) => ({
+        ...effects.map((h) => ({
           id: h.id,
           label: h.name,
           weight: h.weight ?? DEFAULT_WEIGHT,

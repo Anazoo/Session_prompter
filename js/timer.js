@@ -12,7 +12,7 @@ export class SessionTimer {
     this.storage = storage;
     this.onChange = onChange;
     this.onDone = onDone;
-    this.state = { status: 'idle', durationMs: 0, endAt: null, remainingMs: 0 };
+    this.state = { status: 'idle', durationMs: 0, endAt: null, remainingMs: 0, startedAt: null };
     this.interval = null;
     this.wakeLock = null;
     this.keepAwake = true;
@@ -66,6 +66,7 @@ export class SessionTimer {
       durationMs,
       endAt: Date.now() + durationMs,
       remainingMs: durationMs,
+      startedAt: Date.now(),
     };
     this.unlockAudio();
     this.requestWakeLock();
@@ -93,8 +94,14 @@ export class SessionTimer {
     this.onChange(this.state);
   }
 
+  /** Milliseconds actually spent in the session so far. */
+  get elapsedMs() {
+    if (this.state.status === 'idle') return 0;
+    return Math.max(0, (this.state.durationMs || 0) - this.remainingMs);
+  }
+
   reset() {
-    this.state = { status: 'idle', durationMs: 0, endAt: null, remainingMs: 0 };
+    this.state = { status: 'idle', durationMs: 0, endAt: null, remainingMs: 0, startedAt: null };
     this.stopInterval();
     this.releaseWakeLock();
     this.persist();
