@@ -1,5 +1,5 @@
 // Persistent settings, kept in localStorage.
-import { DEFAULT_WEIGHT, DEVICE_TYPE_IDS } from './tree.js';
+import { DEFAULT_WEIGHT, DEVICE_TYPE_IDS, RIG_MAX_SIZE, rigId } from './tree.js';
 import { SCOPES } from './constraints.js';
 
 export const STORAGE_KEY = 'sessionPrompter.settings.v1';
@@ -15,6 +15,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   timer: { minutes: 60, keepAwake: true, chime: true },
   // Built-in constraint ids switched off, plus user-written constraints.
   constraints: { enabled: false, disabled: [], custom: [] },
+  // Hardware jam rigs: how many devices per jam, which generated combos are off, custom combos.
+  rigs: { min: 1, max: 2, excluded: [], custom: [] },
 });
 
 export function uid() {
@@ -68,6 +70,20 @@ export function normalizeSettings(raw) {
       scope: SCOPES[c.scope] ? c.scope : 'any',
     }));
 
+  const hardwareIds = new Set(hardware.map((h) => h.id));
+  const rigMin = clampInt(raw.rigs?.min, 1, RIG_MAX_SIZE, base.rigs.min);
+  const rigMax = clampInt(raw.rigs?.max, 1, RIG_MAX_SIZE, base.rigs.max);
+  const rigs = {
+    min: Math.min(rigMin, rigMax),
+    max: Math.max(rigMin, rigMax),
+    excluded: (Array.isArray(raw.rigs?.excluded) ? raw.rigs.excluded : []).filter((id) => typeof id === 'string'),
+    // A custom rig is only kept while every device in it still exists.
+    custom: (Array.isArray(raw.rigs?.custom) ? raw.rigs.custom : [])
+      .map((r) => (Array.isArray(r?.devices) ? [...new Set(r.devices.map(String))] : []))
+      .filter((devices) => devices.length && devices.every((id) => hardwareIds.has(id)))
+      .map((devices) => ({ id: rigId(devices), devices })),
+  };
+
   const bpmMin = clampInt(raw.bpm?.min, 20, 300, base.bpm.min);
   const bpmMax = clampInt(raw.bpm?.max, 20, 300, base.bpm.max);
 
@@ -84,6 +100,7 @@ export function normalizeSettings(raw) {
       chime: raw.timer?.chime !== false,
     },
     constraints: { enabled: raw.constraints?.enabled === true, disabled, custom },
+    rigs,
   };
 }
 

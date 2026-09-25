@@ -6,6 +6,7 @@ import {
   DEVICE_TYPES,
   FX_DECISION,
   FX_NONE,
+  RIG_DECISION,
   SOFTWARE_DECISION,
   TRACK_DECISION,
   buildDecisions,
@@ -176,10 +177,17 @@ export function generateSession({ locks = {}, weights = {}, config = {}, rng = M
   const device = hardware.find((h) => h.id === sel[DEVICE_DECISION]) || null;
   const plugin = software.find((h) => h.id === sel[SOFTWARE_DECISION]) || null;
   const track = tracks.find((t) => t.id === sel[TRACK_DECISION]) || null;
-  const pedal =
+  const rigOption = findOption(findDecision(decisions, RIG_DECISION), sel[RIG_DECISION]);
+  const rig = rigOption ? rigOption.devices.map((id) => hardware.find((h) => h.id === id)).filter(Boolean) : [];
+  let pedal =
     sel[FX_DECISION] && sel[FX_DECISION] !== FX_NONE
       ? [...hardware, ...software].find((h) => h.id === sel[FX_DECISION])
       : null;
+  // The effect you are designing a preset on is not also the twist.
+  if (pedal && (pedal.id === device?.id || pedal.id === plugin?.id)) {
+    pedal = null;
+    sel[FX_DECISION] = FX_NONE;
+  }
 
   if (sel.startPoint === 'bpmsig') {
     const range = config.bpm || { min: 70, max: 160 };
@@ -188,6 +196,13 @@ export function generateSession({ locks = {}, weights = {}, config = {}, rng = M
 
   const label = (decisionId) => findOption(findDecision(decisions, decisionId), sel[decisionId])?.label ?? '';
   const onDevice = (fallback) => (device ? `on the ${device.name}` : fallback);
+  const onRig = () => {
+    if (!rig.length) return 'on any synth';
+    if (rig.length === 1) return `on the ${rig[0].name}`;
+    const rest = rig.slice(1).map((d) => `the ${d.name}`);
+    const tail = rest.length > 1 ? `${rest.slice(0, -1).join(', ')} and ${rest[rest.length - 1]}` : rest[0];
+    return `on the ${rig[0].name} with ${tail}`;
+  };
 
   const methodPhrase = (method) => {
     switch (method) {
@@ -219,17 +234,25 @@ export function generateSession({ locks = {}, weights = {}, config = {}, rng = M
     detail.push(label('loopKind'), label('loopMethod'));
   } else if (sel.category === 'assets' && sel.assetType === 'sound') {
     title = 'Sound design';
-    const target = { drumkit: 'a drum kit', preset: 'a preset', oneshot: 'a one-shot' }[sel.soundKind];
+    const target = {
+      drumkit: 'a drum kit',
+      preset: sel.presetKind === 'effect' ? 'an effect preset' : 'an instrument preset',
+      oneshot: 'a one-shot',
+    }[sel.soundKind];
     if (sel.soundMethod === 'live') {
       prompt = 'Record a one-shot from a live source: a mic, an acoustic instrument, or a found sound.';
+    } else if (sel.presetKind === 'effect' && sel.soundMethod === 'hardware' && !device) {
+      prompt = `Design an effect preset on a hardware effect.`;
     } else {
       prompt = `Design ${target} ${methodPhrase(sel.soundMethod)}.`;
     }
-    detail.push(label('soundKind'), label('soundMethod'));
+    detail.push(label('soundKind'));
+    if (sel.presetKind) detail.push(label('presetKind'));
+    detail.push(label('soundMethod'));
   } else if (sel.category === 'jamming') {
     title = { synth: 'Synth jam', piano: 'Piano jam', other: 'Free jam' }[sel.jamType] || 'Jam';
     if (sel.jamType === 'synth') {
-      prompt = `Synth jam ${onDevice('on any synth')}. No goal, just play and record everything.`;
+      prompt = `Synth jam ${onRig()}. No goal, just play and record everything.`;
     } else if (sel.jamType === 'piano') {
       prompt = `Piano jam${device ? ` on the ${device.name}` : ''}. Sit down, play, and keep the recorder running.`;
     } else {
@@ -260,6 +283,7 @@ export function generateSession({ locks = {}, weights = {}, config = {}, rng = M
   }
 
   if (device && !detail.includes(device.name)) detail.push(device.name);
+  for (const d of rig) if (!detail.includes(d.name)) detail.push(d.name);
   if (plugin && !detail.includes(plugin.name)) detail.push(plugin.name);
   if (track && !detail.includes(track.name)) detail.push(track.name);
   if (pedal) result.twist = `Twist: run something through the ${pedal.name}.`;
