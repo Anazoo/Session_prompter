@@ -446,10 +446,15 @@ test('jam rigs are built from hardware combinations, honouring exclusions and cu
   const { allJamRigs, jamRigs, rigId } = await import('../js/tree.js');
   const base = { hardware: config.hardware, rigs: { min: 1, max: 2, excluded: [], custom: [] } };
   const all = allJamRigs(base);
-  // Jam-capable instruments: p6, tr8, sp404, nord (pedal excluded). Singles need a lead device.
+  // Every device joins, pedal included, but a rig needs a lead device (synth or keys here).
   const ids = all.map((r) => r.id).sort();
-  assert.deepEqual(ids, ['nord', 'nord+p6', 'nord+sp404', 'nord+tr8', 'p6', 'p6+sp404', 'p6+tr8'].sort());
+  assert.deepEqual(
+    ids,
+    ['nord', 'nord+p6', 'nord+sp404', 'nord+tr8', 'micro+nord', 'p6', 'p6+sp404', 'p6+tr8', 'micro+p6'].sort(),
+  );
   assert.ok(!ids.includes('tr8'), 'a drum machine alone is not a synth jam');
+  assert.ok(!ids.includes('micro'), 'a pedal alone is not a jam');
+  assert.ok(!ids.includes('micro+tr8'), 'pedal plus drum machine has no lead');
   assert.ok(!ids.includes('sp404+tr8'), 'two rhythm boxes without a lead are not a synth jam');
   const withRules = {
     ...base,
@@ -464,7 +469,13 @@ test('jam rigs are built from hardware combinations, honouring exclusions and cu
   assert.ok(!usable.includes('p6+tr8'), 'excluded rig is gone');
   assert.ok(usable.includes('sp404+tr8'), 'custom rig is allowed even without a lead');
   assert.equal(allJamRigs(withRules).find((r) => r.id === 'p6+tr8').excluded, true);
-  const three = allJamRigs({ ...base, rigs: { min: 3, max: 3, excluded: [], custom: [] } }).map((r) => r.id);
+  const onlyFx = { ...base, rigs: { min: 1, max: 1, excluded: [], custom: [{ id: 'micro', devices: ['micro'] }] } };
+  assert.ok(!jamRigs(onlyFx).some((r) => r.id === 'micro'), 'a custom rig of only effects is dropped');
+  const three = allJamRigs({
+    ...base,
+    hardware: config.hardware.filter((h) => h.type !== 'fx'),
+    rigs: { min: 3, max: 3, excluded: [], custom: [] },
+  }).map((r) => r.id);
   assert.deepEqual(three.sort(), ['nord+p6+sp404', 'nord+p6+tr8', 'nord+sp404+tr8', 'p6+sp404+tr8'].sort());
 });
 
@@ -472,23 +483,36 @@ test('synth jams name every device in the rig', () => {
   const rng = makeRng(53);
   const cfg = { ...config, rigs: { min: 2, max: 3, excluded: [], custom: [] } };
   let sawThree = false;
-  for (let i = 0; i < 200; i++) {
+  let sawPedal = false;
+  for (let i = 0; i < 300; i++) {
     const r = generateSession({
       locks: { category: 'jamming', jamType: 'synth' },
       config: cfg,
       rng,
       withConstraint: true,
     });
-    assert.match(r.prompt, /^Synth jam on the .+ with the .+\. No goal/);
+    assert.match(r.prompt, /^Synth jam on the .+ (with|through) the .+\. No goal/);
     assert.equal(r.selections[DEVICE_DECISION], undefined, 'single-device pick is not used for synth jams');
     const count = r.selections.rig.split('+').length;
-    if (count === 3) {
-      sawThree = true;
-      assert.match(r.prompt, /with the .+ and the .+\./);
+    if (count === 3) sawThree = true;
+    if (r.selections.rig.includes('micro')) {
+      sawPedal = true;
+      assert.match(r.prompt, /through the Microcosm\./, 'pedals come last, after "through"');
+      assert.doesNotMatch(r.prompt, /with the Microcosm/);
     }
     assert.ok(r.detail.length >= 1 + count);
   }
   assert.ok(sawThree);
+  assert.ok(sawPedal);
+  const withFx = generateSession({
+    locks: { category: 'jamming', jamType: 'synth', rig: 'micro+p6+tr8' },
+    config: { ...config, rigs: { min: 3, max: 3, excluded: [], custom: [] } },
+    rng,
+  });
+  assert.equal(
+    withFx.prompt,
+    'Synth jam on the Prophet-6 with the TR-8S, through the Microcosm. No goal, just play and record everything.',
+  );
   const single = generateSession({
     locks: { category: 'jamming', jamType: 'synth', rig: 'p6' },
     config: { ...config, rigs: { min: 1, max: 1, excluded: [], custom: [] } },

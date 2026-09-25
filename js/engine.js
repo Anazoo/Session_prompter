@@ -196,12 +196,18 @@ export function generateSession({ locks = {}, weights = {}, config = {}, rng = M
 
   const label = (decisionId) => findOption(findDecision(decisions, decisionId), sel[decisionId])?.label ?? '';
   const onDevice = (fallback) => (device ? `on the ${device.name}` : fallback);
+  const listNames = (items) => {
+    const names = items.map((d) => `the ${d.name}`);
+    return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names[0];
+  };
   const onRig = () => {
-    if (!rig.length) return 'on any synth';
-    if (rig.length === 1) return `on the ${rig[0].name}`;
-    const rest = rig.slice(1).map((d) => `the ${d.name}`);
-    const tail = rest.length > 1 ? `${rest.slice(0, -1).join(', ')} and ${rest[rest.length - 1]}` : rest[0];
-    return `on the ${rig[0].name} with ${tail}`;
+    const instruments = rig.filter((d) => DEVICE_TYPES[d.type]?.role !== 'fx');
+    const effects = rig.filter((d) => DEVICE_TYPES[d.type]?.role === 'fx');
+    if (!instruments.length) return 'on any synth';
+    let text = `on the ${instruments[0].name}`;
+    if (instruments.length > 1) text += ` with ${listNames(instruments.slice(1))}`;
+    if (effects.length) text += `, through ${listNames(effects)}`;
+    return text;
   };
 
   const methodPhrase = (method) => {

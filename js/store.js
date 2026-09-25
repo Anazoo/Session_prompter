@@ -1,5 +1,5 @@
 // Persistent settings, kept in localStorage.
-import { DEFAULT_WEIGHT, DEVICE_TYPE_IDS, RIG_MAX_SIZE, rigId } from './tree.js';
+import { DEFAULT_WEIGHT, DEVICE_TYPE_IDS, RIG_MAX_SIZE, isValidRig, rigId } from './tree.js';
 import { SCOPES } from './constraints.js';
 
 export const STORAGE_KEY = 'sessionPrompter.settings.v1';
@@ -70,7 +70,7 @@ export function normalizeSettings(raw) {
       scope: SCOPES[c.scope] ? c.scope : 'any',
     }));
 
-  const hardwareIds = new Set(hardware.map((h) => h.id));
+  const hardwareById = new Map(hardware.map((h) => [h.id, h]));
   const rigMin = clampInt(raw.rigs?.min, 1, RIG_MAX_SIZE, base.rigs.min);
   const rigMax = clampInt(raw.rigs?.max, 1, RIG_MAX_SIZE, base.rigs.max);
   const rigs = {
@@ -80,7 +80,10 @@ export function normalizeSettings(raw) {
     // A custom rig is only kept while every device in it still exists.
     custom: (Array.isArray(raw.rigs?.custom) ? raw.rigs.custom : [])
       .map((r) => (Array.isArray(r?.devices) ? [...new Set(r.devices.map(String))] : []))
-      .filter((devices) => devices.length && devices.every((id) => hardwareIds.has(id)))
+      .filter(
+        (devices) =>
+          devices.every((id) => hardwareById.has(id)) && isValidRig(devices.map((id) => hardwareById.get(id))),
+      )
       .map((devices) => ({ id: rigId(devices), devices })),
   };
 

@@ -23,6 +23,7 @@ import {
   allJamRigs,
   buildDecisions,
   findDecision,
+  isValidRig,
   jamDevices,
   rigId,
 } from './tree.js';
@@ -864,7 +865,7 @@ function renderGearSection(kind) {
       <h2>${isHardware ? 'Hardware' : 'Software'}</h2>
       <p class="muted">${
         isHardware
-          ? 'List your gear and prompts will name it. The type decides where a device can show up: a drum machine gets drum loops and kits, keys get piano jams and chords, pedals become optional twists.'
+          ? 'List your gear and prompts will name it. The type decides where a device can show up: a drum machine gets drum loops and kits, keys get piano jams and chords, pedals design effect presets, join jam rigs and become optional twists.'
           : 'Instruments and plugins for "software" sessions. Same types as hardware: a drum plugin gets drum loops and kits, a synth gets pads and presets, effects become optional twists.'
       }</p>
       ${list}
@@ -926,11 +927,11 @@ function renderRigSection() {
         </li>`,
         )
         .join('')}</ul>`
-    : '<p class="empty">No custom rigs. Tick two or more devices below to add a combination outside the generated ones.</p>';
+    : '<p class="empty">No custom rigs. Tick two or more devices below, instruments or effects, to add a combination outside the generated ones.</p>';
   return `
     <section class="card">
       <h2>Jam rigs</h2>
-      <p class="muted">Synth jams pick one of these combinations. They are generated from your hardware (every combo with at least one synth-type device), and you can switch any of them off or add your own.</p>
+      <p class="muted">Synth jams pick one of these combinations. They are generated from your hardware, effects and pedals included (every combo with at least one synth-type device), and you can switch any of them off or add your own.</p>
       <div class="field">
         <span class="label">Devices per jam<span class="sub">Fewest to most</span></span>
         <span class="range-pair">${sizeSelect('min')}<span class="muted">to</span>${sizeSelect('max')}</span>
@@ -1375,6 +1376,10 @@ root.addEventListener('submit', (event) => {
     const devices = [...new Set(data.getAll('device').map(String))];
     if (devices.length < 2) {
       showToast('Pick at least two devices for a rig.');
+      return;
+    }
+    if (!isValidRig(devices.map((id) => state.settings.hardware.find((h) => h.id === id)).filter(Boolean))) {
+      showToast('A rig needs at least one instrument, not only effects.');
       return;
     }
     const id = rigId(devices);
