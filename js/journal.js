@@ -103,6 +103,7 @@ export function makeEntry(session, extra = {}) {
     selections: { ...(session.selections || {}) },
     bpm: session.bpm ?? null,
     constraint: session.constraint || '',
+    routingText: session.routingText || '',
     rating: Number.isInteger(extra.rating) && extra.rating >= 1 && extra.rating <= 5 ? extra.rating : null,
     notes: (extra.notes || '').trim(),
     audio: extra.audio || null, // { name, type, size, blob, durationSec? }
@@ -184,6 +185,7 @@ export function parseBackup(data) {
       selections: e.selections && typeof e.selections === 'object' ? e.selections : {},
       bpm: Number.isFinite(e.bpm) ? e.bpm : null,
       constraint: String(e.constraint || ''),
+      routingText: String(e.routingText || ''),
       rating: Number.isInteger(e.rating) && e.rating >= 1 && e.rating <= 5 ? e.rating : null,
       notes: String(e.notes || ''),
       // The clip itself never travels in a backup; keep its name so the journal can say so.

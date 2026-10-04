@@ -1082,3 +1082,22 @@ textarea {
 .check:has(input:checked) {
   border-color: var(--accent);
 }
+
+.routing {
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--success);
+}
+
+.routing-rows {
+  flex-basis: 100%;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+
+.routing-rows .field select {
+  min-height: 40px;
+  font-size: 14px;
+  max-width: 55vw;
+}

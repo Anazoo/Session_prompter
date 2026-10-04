@@ -61,13 +61,23 @@ Microcosm"). The effect you are designing on is never also the twist, and
 "different twist" on the result swaps the twist for another effect.
 
 **Synth jams** pick a **jam rig**: one device or a combination of your
-hardware, effects and pedals included ("Synth jam on the Prophet-6 with the
-TR-8S, through the Microcosm"). Settings → Jam rigs sets how many devices a
-jam may use (1 to 4), lists every generated combination with an on/off switch,
-and lets you add combinations of your own. A generated combination always
-contains at least one synth-type device (synth, groovebox, keys or other
-instrument); a custom rig can be any mix as long as it has at least one
-instrument.
+hardware, with effects, pedals and sequencers included ("Synth jam on the
+Prophet-6 with the TR-8S, sequenced by the Hapax, through the Microcosm").
+Every effect in a rig gets a **routing**: onto one instrument or onto a send
+channel ("Routing: Microcosm on a send."), with a "different routing" link on
+the result. Settings → Jam rigs controls all of it:
+
+- how many devices a jam may use (1 to 4), and a minimum and maximum per
+  device type (for example at most one drum machine, at least one effect);
+- whether send channels are allowed and how likely they are;
+- every generated combination with an on/off switch;
+- your own rigs, built by ticking devices, where each pedal can be pinned to a
+  specific instrument, to a send, or left to be rolled each time.
+
+A generated combination always contains at least one synth-type device (synth,
+groovebox, keys or other instrument); a custom rig can be any mix as long as it
+has at least one instrument. Sequencers never lead a session on their own; they
+only join rigs.
 
 A **Creative constraint** switch in the session builder decides whether a roll
 also gets an extra rule. The app picks one that fits the session: drum-loop
@@ -138,10 +148,11 @@ the app asks the browser for persistent storage on the first save.
 - **Timer**: session length in minutes (presets for 25, 45, 60, 90), keep screen
   awake, chime on/off.
 - **Hardware** and **Software**: name, type (synth, drum machine, sampler,
-  groovebox, keys/piano, effects/pedal, other) and a weight from 0 to 10 for how
-  often it gets picked.
-- **Jam rigs**: devices per synth jam, switches for each generated
-  combination, and your own combinations.
+  groovebox, keys/piano, effects/pedal, sequencer, other) and a weight from 0
+  to 10 for how often it gets picked.
+- **Jam rigs**: devices per synth jam, per-type minimums and maximums, send
+  channel settings, switches for each generated combination, and your own
+  combinations with fixed routing.
 - **Tracks in progress**: optional list used by "Existing track" sessions.
 - **Creative constraints**: your own rules with a scope, and on/off switches
   for the built-in ones.

@@ -1,5 +1,5 @@
 // Persistent settings, kept in localStorage.
-import { DEFAULT_WEIGHT, DEVICE_TYPE_IDS, RIG_MAX_SIZE, isValidRig, rigId } from './tree.js';
+import { DEFAULT_WEIGHT, DEVICE_TYPE_IDS, RIG_MAX_SIZE, isValidRig, rigOptionId } from './tree.js';
 import { SCOPES } from './constraints.js';
 
 export const STORAGE_KEY = 'sessionPrompter.settings.v1';
@@ -16,7 +16,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // Built-in constraint ids switched off, plus user-written constraints.
   constraints: { enabled: false, disabled: [], custom: [] },
   // Hardware jam rigs: how many devices per jam, which generated combos are off, custom combos.
-  rigs: { min: 1, max: 2, excluded: [], custom: [] },
+  rigs: { min: 1, max: 2, excluded: [], custom: [], perType: {}, sends: { enabled: true, chance: 3 } },
 });
 
 export function uid() {
@@ -79,12 +79,35 @@ export function normalizeSettings(raw) {
     excluded: (Array.isArray(raw.rigs?.excluded) ? raw.rigs.excluded : []).filter((id) => typeof id === 'string'),
     // A custom rig is only kept while every device in it still exists.
     custom: (Array.isArray(raw.rigs?.custom) ? raw.rigs.custom : [])
-      .map((r) => (Array.isArray(r?.devices) ? [...new Set(r.devices.map(String))] : []))
+      .map((r) => ({
+        devices: Array.isArray(r?.devices) ? [...new Set(r.devices.map(String))] : [],
+        routing: r?.routing && typeof r.routing === 'object' ? r.routing : {},
+      }))
       .filter(
-        (devices) =>
+        ({ devices }) =>
           devices.every((id) => hardwareById.has(id)) && isValidRig(devices.map((id) => hardwareById.get(id))),
       )
-      .map((devices) => ({ id: rigId(devices), devices })),
+      .map(({ devices, routing }) => {
+        const clean = {};
+        for (const [fx, target] of Object.entries(routing)) {
+          if (!devices.includes(fx) || hardwareById.get(fx)?.type !== 'fx') continue;
+          if (target === 'send' || (devices.includes(target) && hardwareById.get(target)?.type !== 'fx'))
+            clean[fx] = target;
+        }
+        return { id: rigOptionId(devices, clean), devices, routing: clean };
+      }),
+    perType: Object.fromEntries(
+      DEVICE_TYPE_IDS.filter((t) => raw.rigs?.perType?.[t]).map((t) => {
+        const lim = raw.rigs.perType[t];
+        const min = clampInt(lim.min, 0, RIG_MAX_SIZE, 0);
+        const max = clampInt(lim.max, 0, RIG_MAX_SIZE, RIG_MAX_SIZE);
+        return [t, { min: Math.min(min, max), max: Math.max(min, max) }];
+      }),
+    ),
+    sends: {
+      enabled: raw.rigs?.sends?.enabled !== false,
+      chance: clampInt(raw.rigs?.sends?.chance, 0, 10, 3),
+    },
   };
 
   const bpmMin = clampInt(raw.bpm?.min, 20, 300, base.bpm.min);

@@ -5,6 +5,8 @@ import {
   optionWeight,
   pickConstraint,
   pruneLocks,
+  routeRig,
+  routingText,
   weightedPick,
 } from './engine.js';
 import { BUILT_IN_CONSTRAINTS, SCOPES } from './constraints.js';
@@ -15,8 +17,11 @@ import {
   DEVICE_TYPE_IDS,
   FX_DECISION,
   FX_NONE,
+  RANDOM_ROUTE,
   RIG_DECISION,
   RIG_MAX_SIZE,
+  ROLE_OF,
+  SEND,
   SOFTWARE_DECISION,
   STATIC_DECISIONS,
   TRACK_DECISION,
@@ -25,7 +30,7 @@ import {
   findDecision,
   isValidRig,
   jamDevices,
-  rigId,
+  rigOptionId,
 } from './tree.js';
 import { DEFAULT_SETTINGS, loadSettings, normalizeSettings, saveSettings, uid } from './store.js';
 import { SessionTimer, formatClock } from './timer.js';
@@ -58,6 +63,8 @@ const state = {
   // Pending "log this session" form: { session, startedAt, elapsedMs, plannedMs, notes, audio, entryId }
   logDraft: null,
   recording: null,
+  // Custom rig being assembled in Settings: { devices: string[], routing: { [fxId]: target } }
+  rigDraft: { devices: [], routing: {} },
 };
 
 const root = document.getElementById('app');
@@ -431,6 +438,38 @@ function rollLikeEntry(entry) {
   showToast('Choices loaded. Roll when ready.');
 }
 
+/** Re-roll where the rig's effects go, keeping any routes fixed by a custom rig. */
+function rerollRouting() {
+  const r = state.result;
+  if (!r?.routing?.length) return;
+  const decisions = currentDecisions();
+  const option = findDecision(decisions, RIG_DECISION)?.options.find((o) => o.id === r.selections?.[RIG_DECISION]);
+  const rig = (option?.devices || []).map((id) => state.settings.hardware.find((h) => h.id === id)).filter(Boolean);
+  const fixed = option?.routing || {};
+  const canChange = rig.some((d) => ROLE_OF(d) === 'fx' && (!fixed[d.id] || fixed[d.id] === RANDOM_ROUTE));
+  const instruments = rig.filter((d) => ROLE_OF(d) === 'instrument').length;
+  const sendsOn = state.settings.rigs.sends.enabled && state.settings.rigs.sends.chance > 0;
+  if (!canChange || (instruments < 2 && !sendsOn)) {
+    showToast('Nothing else to route this rig through.');
+    return;
+  }
+  const before = r.routingText;
+  for (let i = 0; i < 20; i++) {
+    const routes = routeRig(rig, fixed, state.settings);
+    const text = routingText(routes);
+    if (text !== before || i === 19) {
+      state.result = {
+        ...r,
+        routing: routes.map((x) => ({ fx: x.fx.id, target: x.target === SEND ? SEND : x.target.id })),
+        routingText: text,
+      };
+      break;
+    }
+  }
+  persistSession();
+  render();
+}
+
 /** Swap the effects twist for another effect that fits, keeping everything else. */
 function rerollTwist() {
   const r = state.result;
@@ -498,6 +537,8 @@ async function importBackup(file) {
 
 function render() {
   const timerStatus = timer.state.status;
+  // Keep collapsible panels open across re-renders.
+  const openPanels = new Set([...root.querySelectorAll('details[open][data-key]')].map((d) => d.dataset.key));
   const tabs = [
     ['session', 'Session', '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>'],
     [
@@ -533,6 +574,7 @@ function render() {
       </div>
     </nav>
   `;
+  for (const d of root.querySelectorAll('details[data-key]')) if (openPanels.has(d.dataset.key)) d.open = true;
   renderToast();
   updateTimerDisplay();
 }
@@ -579,6 +621,7 @@ function renderResult() {
     <section class="card result">
       <p class="eyebrow">${esc(r.categoryLabel)} · ${esc(r.title)}</p>
       <h2 class="prompt">${esc(r.prompt)}</h2>
+      ${r.routingText ? `<p class="routing">Routing: ${esc(r.routingText)} <button type="button" class="link" data-action="new-routing" aria-label="Pick a different routing">↻ different routing</button></p>` : ''}
       ${r.twist ? `<p class="twist">${esc(r.twist)} <button type="button" class="link" data-action="new-twist" aria-label="Pick a different effect">↻ different twist</button></p>` : ''}
       ${r.constraint ? `<p class="constraint">Constraint: ${esc(r.constraint)} <button type="button" class="link" data-action="new-constraint" aria-label="Pick a different rule">↻ different rule</button></p>` : ''}
       <ul class="chips">${tags.join('')}</ul>
@@ -713,6 +756,7 @@ function renderLogForm(d) {
     <section class="card log-form">
       <p class="eyebrow">${d.entryId ? 'Edit session' : 'Log this session'}</p>
       <p class="summary">${esc(s.prompt)}</p>
+      ${s.routingText ? `<p class="routing">Routing: ${esc(s.routingText)}</p>` : ''}
       ${s.constraint ? `<p class="constraint">Constraint: ${esc(s.constraint)}</p>` : ''}
       ${meta.length ? `<p class="meta">${meta.join('')}</p>` : ''}
       <label class="block">How did it go?</label>
@@ -807,6 +851,7 @@ function renderEntry(e) {
       <p class="when">${esc(formatDate(e.createdAt))} · ${esc(timeAgo(e.createdAt))}</p>
       <p class="eyebrow">${esc(e.categoryLabel)}${e.title && e.title !== e.categoryLabel ? ` · ${esc(e.title)}` : ''}</p>
       <p class="prompt">${esc(e.prompt)}</p>
+      ${e.routingText ? `<p class="routing">Routing: ${esc(e.routingText)}</p>` : ''}
       ${e.twist ? `<p class="twist">${esc(e.twist)}</p>` : ''}
       ${e.constraint ? `<p class="constraint">Constraint: ${esc(e.constraint)}</p>` : ''}
       <ul class="chips">${chips.join('')}</ul>
@@ -887,20 +932,42 @@ function renderRigSection() {
     return `
     <section class="card">
       <h2>Jam rigs</h2>
-      <p class="muted">Add hardware instruments above and synth jams can suggest one device or a combination of them.</p>
+      <p class="muted">Add hardware above and synth jams can suggest one device or a combination of them, with effects routed onto instruments or sends.</p>
     </section>`;
   }
   const rigs = allJamRigs(s);
   const generated = rigs.filter((r) => !r.custom);
   const custom = rigs.filter((r) => r.custom);
   const sizes = [...new Set(generated.map((r) => r.devices.length))].sort();
-  const sizeSelect = (key) =>
-    `<select data-action="rig-size" data-key="${key}" aria-label="${key === 'min' ? 'Fewest' : 'Most'} devices per jam">${[
-      1, 2, 3, 4,
-    ]
-      .slice(0, RIG_MAX_SIZE)
-      .map((n) => `<option value="${n}" ${s.rigs[key] === n ? 'selected' : ''}>${n}</option>`)
+  const numberSelect = (attrs, current, from, to) =>
+    `<select ${attrs}>${Array.from({ length: to - from + 1 }, (_, i) => from + i)
+      .map((n) => `<option value="${n}" ${current === n ? 'selected' : ''}>${n}</option>`)
       .join('')}</select>`;
+  const sizeSelect = (key) =>
+    numberSelect(
+      `data-action="rig-size" data-key="${key}" aria-label="${key === 'min' ? 'Fewest' : 'Most'} devices per jam"`,
+      s.rigs[key],
+      1,
+      RIG_MAX_SIZE,
+    );
+  const ownedTypes = DEVICE_TYPE_IDS.filter((t) => devices.some((d) => d.type === t));
+  const typeRows = ownedTypes
+    .map((t) => {
+      const lim = s.rigs.perType[t] || { min: 0, max: RIG_MAX_SIZE };
+      const sel = (key) =>
+        numberSelect(
+          `data-action="rig-type-limit" data-type="${t}" data-key="${key}" aria-label="${key === 'min' ? 'Fewest' : 'Most'} ${esc(DEVICE_TYPES[t].label)} per rig"`,
+          lim[key],
+          0,
+          RIG_MAX_SIZE,
+        );
+      return `
+      <div class="field">
+        <span class="label">${esc(DEVICE_TYPES[t].label)}<span class="sub">${devices.filter((d) => d.type === t).length} owned</span></span>
+        <span class="range-pair">${sel('min')}<span class="muted">to</span>${sel('max')}</span>
+      </div>`;
+    })
+    .join('');
   const groups = sizes
     .map(
       (size) => `
@@ -927,27 +994,62 @@ function renderRigSection() {
         </li>`,
         )
         .join('')}</ul>`
-    : '<p class="empty">No custom rigs. Tick two or more devices below, instruments or effects, to add a combination outside the generated ones.</p>';
+    : '<p class="empty">No custom rigs. Tick two or more devices below, instruments, sequencers or effects, to add a combination outside the generated ones.</p>';
+  const draft = state.rigDraft;
+  const draftDevices = draft.devices.map((id) => devices.find((d) => d.id === id)).filter(Boolean);
+  const draftInstruments = draftDevices.filter((d) => ROLE_OF(d) === 'instrument');
+  const draftFx = draftDevices.filter((d) => ROLE_OF(d) === 'fx');
+  const routingRows = draftFx
+    .map((fx) => {
+      const value = draft.routing[fx.id] || RANDOM_ROUTE;
+      return `
+      <div class="field">
+        <span class="label">${esc(fx.name)}<span class="sub">goes on</span></span>
+        <select data-action="rig-draft-route" data-fx="${fx.id}" aria-label="Where ${esc(fx.name)} goes">
+          <option value="${RANDOM_ROUTE}" ${value === RANDOM_ROUTE ? 'selected' : ''}>Rolled each time</option>
+          ${s.rigs.sends.enabled ? `<option value="${SEND}" ${value === SEND ? 'selected' : ''}>A send channel</option>` : ''}
+          ${draftInstruments.map((d) => `<option value="${d.id}" ${value === d.id ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}
+        </select>
+      </div>`;
+    })
+    .join('');
   return `
     <section class="card">
       <h2>Jam rigs</h2>
-      <p class="muted">Synth jams pick one of these combinations. They are generated from your hardware, effects and pedals included (every combo with at least one synth-type device), and you can switch any of them off or add your own.</p>
+      <p class="muted">Synth jams pick one of these combinations. They are generated from your hardware, effects, pedals and sequencers included (every combo with at least one synth-type device), and you can switch any of them off or add your own. Effects in a rig are routed onto one instrument or a send.</p>
       <div class="field">
         <span class="label">Devices per jam<span class="sub">Fewest to most</span></span>
         <span class="range-pair">${sizeSelect('min')}<span class="muted">to</span>${sizeSelect('max')}</span>
       </div>
+      <h3>Per type<span class="path">how many of each in a generated rig</span></h3>
+      ${typeRows}
+      <h3>Effects routing</h3>
+      <div class="field">
+        <span class="label">Allow send channels<span class="sub">Otherwise effects always sit on one instrument</span></span>
+        <label class="switch"><input type="checkbox" data-action="toggle-sends" ${s.rigs.sends.enabled ? 'checked' : ''} aria-label="Allow effects on send channels"><span></span></label>
+      </div>
+      ${
+        s.rigs.sends.enabled
+          ? `<label class="slider-row">
+        <span>Send chance</span>
+        <input type="range" min="0" max="10" step="1" value="${s.rigs.sends.chance}" data-action="send-chance" aria-label="Chance an effect lands on a send">
+        <output>${s.rigs.sends.chance * 10}%</output>
+      </label>`
+          : ''
+      }
       <h3>Your own rigs</h3>
       ${customList}
       <form class="checklist" data-action="add-rig">
         ${devices
           .map(
             (d) =>
-              `<label class="check"><input type="checkbox" name="device" value="${d.id}"> <span>${esc(d.name)}</span></label>`,
+              `<label class="check"><input type="checkbox" name="device" value="${d.id}" data-action="rig-draft-device" ${draft.devices.includes(d.id) ? 'checked' : ''}> <span>${esc(d.name)}</span></label>`,
           )
           .join('')}
+        ${routingRows ? `<div class="routing-rows">${routingRows}</div>` : ''}
         <button class="btn primary" type="submit">Add rig</button>
       </form>
-      <details class="built-ins">
+      <details class="built-ins" data-key="rigs">
         <summary>Generated combinations (${generated.length})</summary>
         ${groups}
       </details>
@@ -1002,7 +1104,7 @@ function renderConstraintsSection() {
         </select>
         <button class="btn primary" type="submit">Add</button>
       </form>
-      <details class="built-ins">
+      <details class="built-ins" data-key="constraints">
         <summary>Built-in rules (${BUILT_IN_CONSTRAINTS.length})</summary>
         ${groups}
       </details>
@@ -1245,6 +1347,9 @@ root.addEventListener('click', (event) => {
     case 'new-twist':
       rerollTwist();
       break;
+    case 'new-routing':
+      rerollRouting();
+      break;
     case 'new-constraint':
       if (state.result) {
         const picked = pickConstraint(state.settings, state.result.selections, Math.random, state.result.constraintId);
@@ -1378,11 +1483,17 @@ root.addEventListener('submit', (event) => {
       showToast('Pick at least two devices for a rig.');
       return;
     }
-    if (!isValidRig(devices.map((id) => state.settings.hardware.find((h) => h.id === id)).filter(Boolean))) {
-      showToast('A rig needs at least one instrument, not only effects.');
+    const hw = devices.map((id) => state.settings.hardware.find((h) => h.id === id)).filter(Boolean);
+    if (!isValidRig(hw)) {
+      showToast('A rig needs at least one instrument, not only effects or sequencers.');
       return;
     }
-    const id = rigId(devices);
+    const routing = {};
+    for (const [fx, target] of Object.entries(state.rigDraft.routing)) {
+      if (!devices.includes(fx) || target === RANDOM_ROUTE) continue;
+      if (target === SEND || devices.includes(target)) routing[fx] = target;
+    }
+    const id = rigOptionId(devices, routing);
     const rigs = state.settings.rigs;
     const generated = allJamRigs(state.settings).some((r) => r.id === id && !r.custom);
     state.settings = {
@@ -1390,9 +1501,11 @@ root.addEventListener('submit', (event) => {
       rigs: {
         ...rigs,
         excluded: rigs.excluded.filter((x) => x !== id),
-        custom: generated || rigs.custom.some((r) => r.id === id) ? rigs.custom : [...rigs.custom, { id, devices }],
+        custom:
+          generated || rigs.custom.some((r) => r.id === id) ? rigs.custom : [...rigs.custom, { id, devices, routing }],
       },
     };
+    state.rigDraft = { devices: [], routing: {} };
     persistSettings();
     render();
     showToast(generated ? 'That combination already exists. It is switched on.' : 'Rig added');
@@ -1429,6 +1542,17 @@ root.addEventListener('input', (event) => {
     case 'draft-notes':
       if (state.logDraft) state.logDraft.notes = el.value;
       break;
+    case 'send-chance': {
+      const chance = Number(el.value);
+      state.settings = {
+        ...state.settings,
+        rigs: { ...state.settings.rigs, sends: { ...state.settings.rigs.sends, chance } },
+      };
+      persistSettings();
+      const out = el.parentElement?.querySelector('output');
+      if (out) out.textContent = `${chance * 10}%`;
+      break;
+    }
     default:
       break;
   }
@@ -1459,12 +1583,54 @@ root.addEventListener('change', (event) => {
       state.settings = { ...state.settings, rigs: { ...state.settings.rigs, excluded } };
       persistSettings();
       state.locks = pruneLocks(currentDecisions(), state.locks);
-      const h3 = el.closest('.field')?.previousElementSibling;
       render();
-      document.querySelector('.built-ins')?.setAttribute('open', '');
-      void h3;
       break;
     }
+    case 'rig-draft-device': {
+      const id = el.value;
+      const devices = el.checked
+        ? [...new Set([...state.rigDraft.devices, id])]
+        : state.rigDraft.devices.filter((d) => d !== id);
+      const routing = { ...state.rigDraft.routing };
+      for (const [fx, target] of Object.entries(routing)) {
+        if (!devices.includes(fx) || (target !== SEND && target !== RANDOM_ROUTE && !devices.includes(target))) {
+          delete routing[fx];
+        }
+      }
+      state.rigDraft = { devices, routing };
+      render();
+      break;
+    }
+    case 'rig-draft-route':
+      state.rigDraft = { ...state.rigDraft, routing: { ...state.rigDraft.routing, [el.dataset.fx]: el.value } };
+      render();
+      break;
+    case 'rig-type-limit': {
+      const type = el.dataset.type;
+      const value = Math.min(RIG_MAX_SIZE, Math.max(0, Number(el.value) || 0));
+      const current = state.settings.rigs.perType[type] || { min: 0, max: RIG_MAX_SIZE };
+      const limit = { ...current, [el.dataset.key]: value };
+      if (limit.min > limit.max) {
+        if (el.dataset.key === 'min') limit.max = limit.min;
+        else limit.min = limit.max;
+      }
+      state.settings = {
+        ...state.settings,
+        rigs: { ...state.settings.rigs, perType: { ...state.settings.rigs.perType, [type]: limit } },
+      };
+      persistSettings();
+      state.locks = pruneLocks(currentDecisions(), state.locks);
+      render();
+      break;
+    }
+    case 'toggle-sends':
+      state.settings = {
+        ...state.settings,
+        rigs: { ...state.settings.rigs, sends: { ...state.settings.rigs.sends, enabled: el.checked } },
+      };
+      persistSettings();
+      render();
+      break;
     case 'rig-size': {
       const value = Math.min(RIG_MAX_SIZE, Math.max(1, Number(el.value) || 1));
       const rigs = { ...state.settings.rigs, [el.dataset.key]: value };

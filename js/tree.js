@@ -67,6 +67,19 @@ export const DEVICE_TYPES = {
       startPoint: [],
     },
   },
+  sequencer: {
+    label: 'Sequencer',
+    role: 'sequencer',
+    // Sequencers drive other gear, so they only appear inside jam rigs.
+    requires: {
+      loopMethod: [],
+      loopKind: [],
+      soundKind: [],
+      presetKind: [],
+      jamType: [],
+      startPoint: [],
+    },
+  },
   other: {
     label: 'Other instrument',
     jam: true,
@@ -76,6 +89,8 @@ export const DEVICE_TYPES = {
     },
   },
 };
+
+export const ROLE_OF = (device) => DEVICE_TYPES[device?.type]?.role || 'instrument';
 
 export const DEVICE_TYPE_IDS = Object.keys(DEVICE_TYPES);
 
@@ -217,9 +232,33 @@ export function jamDevices(hardware = []) {
   return hardware.filter((h) => DEVICE_TYPES[h.type]);
 }
 
-/** Can this set of devices be a rig at all? It needs at least one instrument (not only effects). */
+/** Can this set of devices be a rig at all? It needs at least one instrument (not only effects or sequencers). */
 export function isValidRig(devices) {
-  return devices.length > 0 && devices.some((d) => DEVICE_TYPES[d.type]?.role !== 'fx');
+  return devices.length > 0 && devices.some((d) => ROLE_OF(d) === 'instrument');
+}
+
+export const SEND = 'send';
+export const RANDOM_ROUTE = 'random';
+
+/** Stable id for a rig: its devices, plus any fixed routing. */
+export function rigOptionId(deviceIds, routing = {}) {
+  const fixed = Object.entries(routing)
+    .filter(([, target]) => target && target !== RANDOM_ROUTE)
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([fx, target]) => `${fx}:${target}`);
+  return rigId(deviceIds) + (fixed.length ? `@${fixed.join(',')}` : '');
+}
+
+/** Does a combination respect the per-type minimum and maximum counts? */
+export function withinTypeLimits(devices, perType = {}) {
+  const counts = {};
+  for (const d of devices) counts[d.type] = (counts[d.type] || 0) + 1;
+  for (const [type, limit] of Object.entries(perType)) {
+    const n = counts[type] || 0;
+    if (limit?.min != null && n < limit.min) return false;
+    if (limit?.max != null && n > limit.max) return false;
+  }
+  return true;
 }
 
 function combinations(items, size) {
@@ -248,14 +287,26 @@ export function allJamRigs(config = {}) {
   const pool = jamDevices(hardware);
   const seen = new Set();
   const out = [];
-  const push = (devices, custom) => {
-    const id = rigId(devices.map((d) => d.id));
+  const perType = rigs.perType || {};
+  const push = (devices, custom, routing = {}) => {
+    const id = rigOptionId(
+      devices.map((d) => d.id),
+      routing,
+    );
     if (!id || seen.has(id)) return;
     seen.add(id);
+    const fixed = Object.entries(routing).filter(([, t]) => t && t !== RANDOM_ROUTE);
+    const routeLabel = fixed
+      .map(([fx, target]) => {
+        const fxName = byId.get(fx)?.name || fx;
+        return target === SEND ? `${fxName} on a send` : `${fxName} on the ${byId.get(target)?.name || target}`;
+      })
+      .join(', ');
     out.push({
       id,
       devices,
-      label: devices.map((d) => d.name).join(' + '),
+      routing,
+      label: devices.map((d) => d.name).join(' + ') + (routeLabel ? ` (${routeLabel})` : ''),
       weight: Math.round(devices.reduce((sum, d) => sum + (d.weight ?? DEFAULT_WEIGHT), 0) / devices.length),
       custom,
       excluded: excluded.has(id),
@@ -263,13 +314,13 @@ export function allJamRigs(config = {}) {
   };
   for (let size = min; size <= max; size++) {
     for (const combo of combinations(pool, size)) {
-      // A synth jam needs at least one device that can lead it.
-      if (combo.some((d) => DEVICE_TYPES[d.type]?.jam)) push(combo, false);
+      // A synth jam needs at least one device that can lead it, and must respect per-type limits.
+      if (combo.some((d) => DEVICE_TYPES[d.type]?.jam) && withinTypeLimits(combo, perType)) push(combo, false);
     }
   }
   for (const rig of rigs.custom || []) {
     const devices = (rig.devices || []).map((id) => byId.get(id)).filter(Boolean);
-    if (isValidRig(devices)) push(devices, true);
+    if (isValidRig(devices)) push(devices, true, rig.routing || {});
   }
   return out;
 }
@@ -323,7 +374,13 @@ export function buildDecisions(config = {}) {
       dynamic: true,
       optional: true,
       parent: ['jamType', 'synth'],
-      options: rigs.map((r) => ({ id: r.id, label: r.label, weight: r.weight, devices: r.devices.map((d) => d.id) })),
+      options: rigs.map((r) => ({
+        id: r.id,
+        label: r.label,
+        weight: r.weight,
+        devices: r.devices.map((d) => d.id),
+        routing: r.routing || {},
+      })),
     });
   }
 

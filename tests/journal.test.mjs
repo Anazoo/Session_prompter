@@ -72,3 +72,31 @@ test('parseBackup accepts a bare settings object and rejects junk', () => {
   assert.throws(() => parseBackup({ hello: 'world' }));
   assert.throws(() => parseBackup('nope'));
 });
+
+test('settings keep rig routing, per-type limits and send options', () => {
+  const s = normalizeSettings({
+    hardware: [
+      { id: 'p6', name: 'Prophet-6', type: 'synth' },
+      { id: 'micro', name: 'Microcosm', type: 'fx' },
+      { id: 'hapax', name: 'Hapax', type: 'sequencer' },
+    ],
+    rigs: {
+      min: 2,
+      max: 9,
+      custom: [{ devices: ['p6', 'micro'], routing: { micro: 'send', ghost: 'p6' } }, { devices: ['micro', 'hapax'] }],
+      perType: { fx: { min: 3, max: 1 }, bogus: { min: 1, max: 1 } },
+      sends: { enabled: false, chance: 42 },
+    },
+  });
+  assert.equal(s.hardware[2].type, 'sequencer');
+  assert.deepEqual(s.rigs.custom, [
+    { id: 'micro+p6@micro:send', devices: ['p6', 'micro'], routing: { micro: 'send' } },
+  ]);
+  assert.deepEqual(s.rigs.perType, { fx: { min: 1, max: 3 } });
+  assert.deepEqual(s.rigs.sends, { enabled: false, chance: 10 });
+  assert.equal(s.rigs.max, 4);
+  const entry = makeEntry({ prompt: 'x', routingText: 'Microcosm on a send.' });
+  assert.equal(entry.routingText, 'Microcosm on a send.');
+  const parsed = parseBackup(makeBackup(s, [entry]));
+  assert.equal(parsed.journal[0].routingText, 'Microcosm on a send.');
+});

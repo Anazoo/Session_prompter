@@ -6,7 +6,10 @@ import {
   DEVICE_TYPES,
   FX_DECISION,
   FX_NONE,
+  RANDOM_ROUTE,
   RIG_DECISION,
+  ROLE_OF,
+  SEND,
   SOFTWARE_DECISION,
   TRACK_DECISION,
   buildDecisions,
@@ -164,6 +167,37 @@ export function pickConstraint(config, selections, rng = Math.random, excludeId 
 }
 
 /**
+ * Decide where each effect in a jam rig goes: on one instrument or on a send.
+ * Fixed routes from a custom rig are kept; everything else is rolled.
+ * @returns {Array<{fx: object, target: 'send' | object}>}
+ */
+export function routeRig(rig, fixed = {}, config = {}, rng = Math.random) {
+  const instruments = rig.filter((d) => ROLE_OF(d) === 'instrument');
+  const effects = rig.filter((d) => ROLE_OF(d) === 'fx');
+  if (!instruments.length) return [];
+  const sends = config.rigs?.sends || {};
+  const sendChance = sends.enabled === false ? 0 : Math.min(10, Math.max(0, sends.chance ?? 3)) / 10;
+  return effects.map((fx) => {
+    const want = fixed[fx.id];
+    if (want === SEND && sendChance >= 0) return { fx, target: SEND };
+    const fixedTarget = want && want !== RANDOM_ROUTE ? instruments.find((d) => d.id === want) : null;
+    if (fixedTarget) return { fx, target: fixedTarget };
+    if (sendChance > 0 && rng() < sendChance) return { fx, target: SEND };
+    return { fx, target: weightedPick(instruments, () => 1, rng) };
+  });
+}
+
+export function routingText(routes) {
+  if (!routes.length) return '';
+  return (
+    routes
+      .map(({ fx, target }) => (target === SEND ? `${fx.name} on a send` : `${fx.name} on the ${target.name}`))
+      .join(', ')
+      .replace(/^./, (c) => c.toUpperCase()) + '.'
+  );
+}
+
+/**
  * @param {{locks?: object, weights?: object, config?: object, rng?: Function, withConstraint?: boolean}} args
  */
 export function generateSession({ locks = {}, weights = {}, config = {}, rng = Math.random, withConstraint = false }) {
@@ -201,11 +235,13 @@ export function generateSession({ locks = {}, weights = {}, config = {}, rng = M
     return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names[0];
   };
   const onRig = () => {
-    const instruments = rig.filter((d) => DEVICE_TYPES[d.type]?.role !== 'fx');
-    const effects = rig.filter((d) => DEVICE_TYPES[d.type]?.role === 'fx');
+    const instruments = rig.filter((d) => ROLE_OF(d) === 'instrument');
+    const effects = rig.filter((d) => ROLE_OF(d) === 'fx');
+    const sequencers = rig.filter((d) => ROLE_OF(d) === 'sequencer');
     if (!instruments.length) return 'on any synth';
     let text = `on the ${instruments[0].name}`;
     if (instruments.length > 1) text += ` with ${listNames(instruments.slice(1))}`;
+    if (sequencers.length) text += `, sequenced by ${listNames(sequencers)}`;
     if (effects.length) text += `, through ${listNames(effects)}`;
     return text;
   };
@@ -259,6 +295,11 @@ export function generateSession({ locks = {}, weights = {}, config = {}, rng = M
     title = { synth: 'Synth jam', piano: 'Piano jam', other: 'Free jam' }[sel.jamType] || 'Jam';
     if (sel.jamType === 'synth') {
       prompt = `Synth jam ${onRig()}. No goal, just play and record everything.`;
+      const routes = routeRig(rig, rigOption?.routing || {}, config, rng);
+      if (routes.length) {
+        result.routing = routes.map((r) => ({ fx: r.fx.id, target: r.target === SEND ? SEND : r.target.id }));
+        result.routingText = routingText(routes);
+      }
     } else if (sel.jamType === 'piano') {
       prompt = `Piano jam${device ? ` on the ${device.name}` : ''}. Sit down, play, and keep the recorder running.`;
     } else {

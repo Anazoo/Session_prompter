@@ -545,3 +545,129 @@ test('constraint scopes tell drum loops from drum kits and presets from each oth
   for (const s of ['drumloop', 'drumkit', 'instpreset', 'fxpreset', 'oneshot', 'rig']) assert.ok(scopes.has(s), s);
   assert.ok(!scopes.has('drums'), 'old combined scope is gone');
 });
+
+test('sequencers only live inside jam rigs and are named as such', async () => {
+  const { allJamRigs } = await import('../js/tree.js');
+  const rng = makeRng(59);
+  const cfg = {
+    ...config,
+    hardware: [...config.hardware, { id: 'hapax', name: 'Hapax', type: 'sequencer', weight: 5 }],
+    rigs: { min: 1, max: 2, excluded: [], custom: [] },
+  };
+  const ids = allJamRigs(cfg).map((r) => r.id);
+  assert.ok(ids.includes('hapax+p6'), 'sequencer pairs with a synth');
+  assert.ok(!ids.includes('hapax'), 'a sequencer alone is not a rig');
+  assert.ok(!ids.includes('hapax+tr8'), 'sequencer plus drum machine has no lead');
+  for (let i = 0; i < 100; i++) {
+    const loop = generateSession({
+      locks: { category: 'assets', assetType: 'loop', loopMethod: 'hardware' },
+      config: cfg,
+      rng,
+    });
+    assert.notEqual(loop.selections[DEVICE_DECISION], 'hapax');
+    const sound = generateSession({
+      locks: { category: 'assets', assetType: 'sound', soundMethod: 'hardware' },
+      config: cfg,
+      rng,
+    });
+    assert.notEqual(sound.selections[DEVICE_DECISION], 'hapax');
+  }
+  const jam = generateSession({ locks: { category: 'jamming', jamType: 'synth', rig: 'hapax+p6' }, config: cfg, rng });
+  assert.equal(
+    jam.prompt,
+    'Synth jam on the Prophet-6, sequenced by the Hapax. No goal, just play and record everything.',
+  );
+  assert.equal(jam.routingText, undefined, 'no effects, no routing line');
+});
+
+test('per-type limits shape generated rigs', async () => {
+  const { allJamRigs } = await import('../js/tree.js');
+  const base = { hardware: config.hardware, rigs: { min: 1, max: 3, excluded: [], custom: [], perType: {} } };
+  const noFx = allJamRigs({ ...base, rigs: { ...base.rigs, perType: { fx: { min: 0, max: 0 } } } });
+  assert.ok(
+    noFx.length > 0 && noFx.every((r) => !r.devices.some((d) => d.type === 'fx')),
+    'max 0 effects removes pedals',
+  );
+  const needFx = allJamRigs({ ...base, rigs: { ...base.rigs, perType: { fx: { min: 1, max: 1 } } } });
+  assert.ok(
+    needFx.length > 0 && needFx.every((r) => r.devices.filter((d) => d.type === 'fx').length === 1),
+    'min 1 effect forces a pedal',
+  );
+  const oneSynth = allJamRigs({
+    ...base,
+    rigs: { ...base.rigs, perType: { synth: { min: 1, max: 1 }, keys: { min: 0, max: 0 } } },
+  });
+  assert.ok(oneSynth.every((r) => r.devices.some((d) => d.id === 'p6') && !r.devices.some((d) => d.id === 'nord')));
+  const custom = allJamRigs({
+    ...base,
+    rigs: { ...base.rigs, perType: { fx: { min: 0, max: 0 } }, custom: [{ id: 'micro+p6', devices: ['micro', 'p6'] }] },
+  });
+  assert.ok(
+    custom.some((r) => r.id === 'micro+p6' && r.custom),
+    'custom rigs ignore per-type limits',
+  );
+});
+
+test('effects in a rig are routed onto an instrument or a send', async () => {
+  const { routeRig, routingText } = await import('../js/engine.js');
+  const { rigOptionId } = await import('../js/tree.js');
+  const byId = Object.fromEntries(config.hardware.map((h) => [h.id, h]));
+  const rig = [byId.p6, byId.tr8, byId.micro];
+  const rng = makeRng(61);
+  let sends = 0;
+  let onP6 = 0;
+  for (let i = 0; i < 1000; i++) {
+    const routes = routeRig(rig, {}, { rigs: { sends: { enabled: true, chance: 3 } } }, rng);
+    assert.equal(routes.length, 1);
+    if (routes[0].target === 'send') sends++;
+    else if (routes[0].target.id === 'p6') onP6++;
+    else assert.equal(routes[0].target.id, 'tr8');
+  }
+  assert.ok(sends > 220 && sends < 380, `about 30% sends (${sends})`);
+  assert.ok(onP6 > 280 && onP6 < 420, `the rest split between instruments (${onP6})`);
+  for (let i = 0; i < 50; i++) {
+    assert.notEqual(routeRig(rig, {}, { rigs: { sends: { enabled: false, chance: 10 } } }, rng)[0].target, 'send');
+    assert.equal(routeRig(rig, {}, { rigs: { sends: { enabled: true, chance: 10 } } }, rng)[0].target, 'send');
+    assert.equal(
+      routeRig(rig, { micro: 'tr8' }, { rigs: { sends: { enabled: true, chance: 10 } } }, rng)[0].target.id,
+      'tr8',
+    );
+    assert.equal(routeRig(rig, { micro: 'send' }, { rigs: { sends: { enabled: false } } }, rng)[0].target, 'send');
+  }
+  assert.deepEqual(routeRig([byId.micro], {}, {}, rng), [], 'no instruments, no routing');
+  assert.equal(routingText([{ fx: byId.micro, target: 'send' }]), 'Microcosm on a send.');
+  assert.equal(routingText([{ fx: byId.micro, target: byId.p6 }]), 'Microcosm on the Prophet-6.');
+  assert.equal(rigOptionId(['p6', 'micro'], { micro: 'send' }), 'micro+p6@micro:send');
+  assert.equal(rigOptionId(['p6', 'micro'], { micro: 'random' }), 'micro+p6');
+
+  const cfg = { ...config, rigs: { min: 2, max: 3, excluded: [], custom: [], sends: { enabled: true, chance: 5 } } };
+  let sawRouting = false;
+  for (let i = 0; i < 200; i++) {
+    const r = generateSession({ locks: { category: 'jamming', jamType: 'synth' }, config: cfg, rng });
+    if (r.selections.rig.includes('micro')) {
+      sawRouting = true;
+      assert.match(r.routingText, /^Microcosm on (a send|the .+)\.$/);
+      assert.equal(r.routing.length, 1);
+    } else {
+      assert.equal(r.routingText, undefined);
+    }
+  }
+  assert.ok(sawRouting);
+  const fixedCfg = {
+    ...config,
+    rigs: {
+      min: 1,
+      max: 1,
+      excluded: [],
+      custom: [{ id: 'micro+p6@micro:send', devices: ['p6', 'micro'], routing: { micro: 'send' } }],
+      sends: { enabled: true, chance: 0 },
+    },
+  };
+  const fixed = generateSession({
+    locks: { category: 'jamming', jamType: 'synth', rig: 'micro+p6@micro:send' },
+    config: fixedCfg,
+    rng,
+  });
+  assert.equal(fixed.routingText, 'Microcosm on a send.', 'a fixed send route wins even with send chance 0');
+  assert.match(fixed.prompt, /through the Microcosm\./);
+});
