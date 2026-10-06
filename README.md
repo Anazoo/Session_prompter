@@ -64,20 +64,27 @@ Microcosm"). The effect you are designing on is never also the twist, and
 hardware, with effects, pedals and sequencers included ("Synth jam on the
 Prophet-6 with the TR-8S, sequenced by the Hapax, through the Microcosm").
 Every effect in a rig gets a **routing**: onto one instrument or onto a send
-channel ("Routing: Microcosm on a send."), with a "different routing" link on
-the result. Settings → Jam rigs controls all of it:
+channel ("Routing: Microcosm on a send."), with "different rig" and
+"different routing" links on the result.
 
-- how many devices a jam may use (1 to 4), and a minimum and maximum per
-  device type (for example at most one drum machine, at least one effect);
-- whether send channels are allowed and how likely they are;
-- every generated combination with an on/off switch;
-- your own rigs, built by ticking devices, where each pedal can be pinned to a
-  specific instrument, to a send, or left to be rolled each time.
+Rigs are generated from **constraints**, not picked from a list. Settings →
+Jam rig defaults holds the starting point: devices per jam (1 to 4), a minimum
+and maximum per device type, whether send channels are allowed and how likely
+they are, and whether a groovebox counts as the rig's sequencer. In the Session
+tab a collapsible **Rig constraints** panel starts from those defaults and lets
+you tighten them for this session: tap a device once to require it, twice to
+rule it out, pin a required pedal to an instrument or a send, and adjust the
+counts. The panel shows how many rigs fit, and named **presets** save a set of
+constraints for one-tap recall. A rig always contains at least one synth-type
+device; sequencers and effects never lead a session on their own.
 
-A generated combination always contains at least one synth-type device (synth,
-groovebox, keys or other instrument); a custom rig can be any mix as long as it
-has at least one instrument. Sequencers never lead a session on their own; they
-only join rigs.
+**Gear rotation** (Settings, off by default) makes gear, rigs, twists and
+constraints that appeared in your last few logged sessions less likely, with a
+look-back count and a strength from "slightly less likely" to "almost never".
+
+The result card has a **Share** button that puts the prompt, routing, twist and
+constraint on the iOS share sheet (or copies them where sharing is not
+available).
 
 A **Creative constraint** switch in the session builder decides whether a roll
 also gets an extra rule. The app picks one that fits the session: drum-loop
@@ -137,7 +144,9 @@ with the prompt and the time actually worked. Rate it, add notes, attach a clip 
 "Record" to capture straight from the microphone, then save. Sessions run
 without the timer can be logged from the result card. The Journal tab lists
 everything with playback, editing, deletion and "Roll this again", which
-reloads that session's choices as locks.
+reloads that session's choices as locks, and can be filtered by session type,
+minimum rating ("Keepers only" is five stars) and a text search over notes,
+prompts and gear.
 
 Clips are capped at 100 MB each. iOS may evict site data from Safari after a
 week without use; the installed home-screen app is exempt from that rule, and
@@ -150,9 +159,11 @@ the app asks the browser for persistent storage on the first save.
 - **Hardware** and **Software**: name, type (synth, drum machine, sampler,
   groovebox, keys/piano, effects/pedal, sequencer, other) and a weight from 0
   to 10 for how often it gets picked.
-- **Jam rigs**: devices per synth jam, per-type minimums and maximums, send
-  channel settings, switches for each generated combination, and your own
-  combinations with fixed routing.
+- **Jam rig defaults**: devices per synth jam, per-type minimums and maximums,
+  send channel settings, grooveboxes as sequencers. Per-session constraints and
+  presets live in the Session tab.
+- **Gear rotation**: on/off, look-back, strength, and whether constraints and
+  twists rotate too.
 - **Tracks in progress**: optional list used by "Existing track" sessions.
 - **Creative constraints**: your own rules with a scope, and on/off switches
   for the built-in ones.
@@ -175,6 +186,7 @@ js/store.js              settings persistence and validation
 js/timer.js              countdown timer, wake lock, chime
 js/journal.js            IndexedDB journal, stats, backup format
 js/constraints.js        creative constraint pool and scope matching
+js/rigs.js               jam rig constraints and generation
 js/app.js                UI
 tests/                   engine and journal tests
 scripts/serve.mjs        tiny static server for development

@@ -1,5 +1,6 @@
 // Persistent settings, kept in localStorage.
-import { DEFAULT_WEIGHT, DEVICE_TYPE_IDS, RIG_MAX_SIZE, isValidRig, rigOptionId } from './tree.js';
+import { DEFAULT_WEIGHT, DEVICE_TYPE_IDS, RIG_MAX_SIZE } from './tree.js';
+import { normalizeRigConstraints } from './rigs.js';
 import { SCOPES } from './constraints.js';
 
 export const STORAGE_KEY = 'sessionPrompter.settings.v1';
@@ -16,7 +17,12 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // Built-in constraint ids switched off, plus user-written constraints.
   constraints: { enabled: false, disabled: [], custom: [] },
   // Hardware jam rigs: how many devices per jam, which generated combos are off, custom combos.
-  rigs: { min: 1, max: 2, excluded: [], custom: [], perType: {}, sends: { enabled: true, chance: 3 } },
+  // Default jam rig constraints: the starting point for each session.
+  rigs: { min: 1, max: 2, perType: {}, sends: { enabled: true, chance: 3 }, grooveboxSequences: false },
+  // Named rig constraint sets the user saved from the Session tab.
+  rigPresets: [],
+  // Gear rotation: make recently used gear, constraints and twists less likely.
+  rotation: { enabled: false, lookBack: 3, strength: 7, includeConstraints: true },
 });
 
 export function uid() {
@@ -70,32 +76,11 @@ export function normalizeSettings(raw) {
       scope: SCOPES[c.scope] ? c.scope : 'any',
     }));
 
-  const hardwareById = new Map(hardware.map((h) => [h.id, h]));
   const rigMin = clampInt(raw.rigs?.min, 1, RIG_MAX_SIZE, base.rigs.min);
   const rigMax = clampInt(raw.rigs?.max, 1, RIG_MAX_SIZE, base.rigs.max);
   const rigs = {
     min: Math.min(rigMin, rigMax),
     max: Math.max(rigMin, rigMax),
-    excluded: (Array.isArray(raw.rigs?.excluded) ? raw.rigs.excluded : []).filter((id) => typeof id === 'string'),
-    // A custom rig is only kept while every device in it still exists.
-    custom: (Array.isArray(raw.rigs?.custom) ? raw.rigs.custom : [])
-      .map((r) => ({
-        devices: Array.isArray(r?.devices) ? [...new Set(r.devices.map(String))] : [],
-        routing: r?.routing && typeof r.routing === 'object' ? r.routing : {},
-      }))
-      .filter(
-        ({ devices }) =>
-          devices.every((id) => hardwareById.has(id)) && isValidRig(devices.map((id) => hardwareById.get(id))),
-      )
-      .map(({ devices, routing }) => {
-        const clean = {};
-        for (const [fx, target] of Object.entries(routing)) {
-          if (!devices.includes(fx) || hardwareById.get(fx)?.type !== 'fx') continue;
-          if (target === 'send' || (devices.includes(target) && hardwareById.get(target)?.type !== 'fx'))
-            clean[fx] = target;
-        }
-        return { id: rigOptionId(devices, clean), devices, routing: clean };
-      }),
     perType: Object.fromEntries(
       DEVICE_TYPE_IDS.filter((t) => raw.rigs?.perType?.[t]).map((t) => {
         const lim = raw.rigs.perType[t];
@@ -108,7 +93,22 @@ export function normalizeSettings(raw) {
       enabled: raw.rigs?.sends?.enabled !== false,
       chance: clampInt(raw.rigs?.sends?.chance, 0, 10, 3),
     },
+    grooveboxSequences: raw.rigs?.grooveboxSequences === true,
   };
+  const rotation = {
+    enabled: raw.rotation?.enabled === true,
+    lookBack: clampInt(raw.rotation?.lookBack, 1, 20, base.rotation.lookBack),
+    strength: clampInt(raw.rotation?.strength, 0, 10, base.rotation.strength),
+    includeConstraints: raw.rotation?.includeConstraints !== false,
+  };
+  const partial = { hardware, rigs };
+  const rigPresets = (Array.isArray(raw.rigPresets) ? raw.rigPresets : [])
+    .filter((p) => p && typeof p.name === 'string' && p.name.trim())
+    .map((p) => ({
+      id: typeof p.id === 'string' && p.id ? p.id : uid(),
+      name: p.name.trim().slice(0, 40),
+      constraints: normalizeRigConstraints(p.constraints, partial),
+    }));
 
   const bpmMin = clampInt(raw.bpm?.min, 20, 300, base.bpm.min);
   const bpmMax = clampInt(raw.bpm?.max, 20, 300, base.bpm.max);
@@ -127,6 +127,8 @@ export function normalizeSettings(raw) {
     },
     constraints: { enabled: raw.constraints?.enabled === true, disabled, custom },
     rigs,
+    rigPresets,
+    rotation,
   };
 }
 

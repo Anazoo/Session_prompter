@@ -132,7 +132,7 @@ export function matchesScope(scope, sel) {
     case 'jamming':
       return sel.category === 'jamming';
     case 'rig':
-      return sel.jamType === 'synth' && typeof sel.rig === 'string' && sel.rig.includes('+');
+      return sel.jamType === 'synth' && (sel.rigSize || 0) >= 2;
     case 'tracks':
       return sel.category === 'tracks';
     case 'newtrack':

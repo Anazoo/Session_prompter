@@ -334,7 +334,10 @@ test('creative constraints are rolled only when chosen and always fit the sessio
     assert.ok(r.constraint, 'a constraint text is picked');
     assert.equal(r.selections.constraint, undefined, 'the constraint is not a tree decision');
     const c = ids.get(r.constraintId);
-    assert.ok(c && matchesScope(c.scope, r.selections), `${r.constraintId} fits ${JSON.stringify(r.selections)}`);
+    assert.ok(
+      c && matchesScope(c.scope, { ...r.selections, rigSize: (r.rig || []).length }),
+      `${r.constraintId} fits ${JSON.stringify(r.selections)}`,
+    );
   }
   const off = generateSession({ config, rng });
   assert.equal(off.constraint, undefined, 'off by default');
@@ -442,87 +445,6 @@ test('presets split into instrument and effect, and effects units only design ef
   assert.equal(soft.twist, undefined);
 });
 
-test('jam rigs are built from hardware combinations, honouring exclusions and custom rigs', async () => {
-  const { allJamRigs, jamRigs, rigId } = await import('../js/tree.js');
-  const base = { hardware: config.hardware, rigs: { min: 1, max: 2, excluded: [], custom: [] } };
-  const all = allJamRigs(base);
-  // Every device joins, pedal included, but a rig needs a lead device (synth or keys here).
-  const ids = all.map((r) => r.id).sort();
-  assert.deepEqual(
-    ids,
-    ['nord', 'nord+p6', 'nord+sp404', 'nord+tr8', 'micro+nord', 'p6', 'p6+sp404', 'p6+tr8', 'micro+p6'].sort(),
-  );
-  assert.ok(!ids.includes('tr8'), 'a drum machine alone is not a synth jam');
-  assert.ok(!ids.includes('micro'), 'a pedal alone is not a jam');
-  assert.ok(!ids.includes('micro+tr8'), 'pedal plus drum machine has no lead');
-  assert.ok(!ids.includes('sp404+tr8'), 'two rhythm boxes without a lead are not a synth jam');
-  const withRules = {
-    ...base,
-    rigs: {
-      min: 1,
-      max: 2,
-      excluded: ['p6+tr8'],
-      custom: [{ id: rigId(['sp404', 'tr8']), devices: ['sp404', 'tr8'] }],
-    },
-  };
-  const usable = jamRigs(withRules).map((r) => r.id);
-  assert.ok(!usable.includes('p6+tr8'), 'excluded rig is gone');
-  assert.ok(usable.includes('sp404+tr8'), 'custom rig is allowed even without a lead');
-  assert.equal(allJamRigs(withRules).find((r) => r.id === 'p6+tr8').excluded, true);
-  const onlyFx = { ...base, rigs: { min: 1, max: 1, excluded: [], custom: [{ id: 'micro', devices: ['micro'] }] } };
-  assert.ok(!jamRigs(onlyFx).some((r) => r.id === 'micro'), 'a custom rig of only effects is dropped');
-  const three = allJamRigs({
-    ...base,
-    hardware: config.hardware.filter((h) => h.type !== 'fx'),
-    rigs: { min: 3, max: 3, excluded: [], custom: [] },
-  }).map((r) => r.id);
-  assert.deepEqual(three.sort(), ['nord+p6+sp404', 'nord+p6+tr8', 'nord+sp404+tr8', 'p6+sp404+tr8'].sort());
-});
-
-test('synth jams name every device in the rig', () => {
-  const rng = makeRng(53);
-  const cfg = { ...config, rigs: { min: 2, max: 3, excluded: [], custom: [] } };
-  let sawThree = false;
-  let sawPedal = false;
-  for (let i = 0; i < 300; i++) {
-    const r = generateSession({
-      locks: { category: 'jamming', jamType: 'synth' },
-      config: cfg,
-      rng,
-      withConstraint: true,
-    });
-    assert.match(r.prompt, /^Synth jam on the .+ (with|through) the .+\. No goal/);
-    assert.equal(r.selections[DEVICE_DECISION], undefined, 'single-device pick is not used for synth jams');
-    const count = r.selections.rig.split('+').length;
-    if (count === 3) sawThree = true;
-    if (r.selections.rig.includes('micro')) {
-      sawPedal = true;
-      assert.match(r.prompt, /through the Microcosm\./, 'pedals come last, after "through"');
-      assert.doesNotMatch(r.prompt, /with the Microcosm/);
-    }
-    assert.ok(r.detail.length >= 1 + count);
-  }
-  assert.ok(sawThree);
-  assert.ok(sawPedal);
-  const withFx = generateSession({
-    locks: { category: 'jamming', jamType: 'synth', rig: 'micro+p6+tr8' },
-    config: { ...config, rigs: { min: 3, max: 3, excluded: [], custom: [] } },
-    rng,
-  });
-  assert.equal(
-    withFx.prompt,
-    'Synth jam on the Prophet-6 with the TR-8S, through the Microcosm. No goal, just play and record everything.',
-  );
-  const single = generateSession({
-    locks: { category: 'jamming', jamType: 'synth', rig: 'p6' },
-    config: { ...config, rigs: { min: 1, max: 1, excluded: [], custom: [] } },
-    rng,
-  });
-  assert.match(single.prompt, /^Synth jam on the Prophet-6\./);
-  const none = generateSession({ locks: { category: 'jamming', jamType: 'synth' }, config: {}, rng });
-  assert.match(none.prompt, /^Synth jam on any synth\./);
-});
-
 test('constraint scopes tell drum loops from drum kits and presets from each other', () => {
   const sel = (extra) => ({ category: 'assets', ...extra });
   assert.equal(matchesScope('drumloop', sel({ assetType: 'loop', loopKind: 'drums' })), true);
@@ -539,78 +461,15 @@ test('constraint scopes tell drum loops from drum kits and presets from each oth
   );
   assert.equal(matchesScope('fxpreset', sel({ assetType: 'sound', soundKind: 'preset', presetKind: 'effect' })), true);
   assert.equal(matchesScope('oneshot', sel({ assetType: 'sound', soundKind: 'oneshot' })), true);
-  assert.equal(matchesScope('rig', { category: 'jamming', jamType: 'synth', rig: 'nord+p6' }), true);
-  assert.equal(matchesScope('rig', { category: 'jamming', jamType: 'synth', rig: 'p6' }), false);
+  assert.equal(matchesScope('rig', { category: 'jamming', jamType: 'synth', rigSize: 2 }), true);
+  assert.equal(matchesScope('rig', { category: 'jamming', jamType: 'synth', rigSize: 1 }), false);
   const scopes = new Set(BUILT_IN_CONSTRAINTS.map((c) => c.scope));
   for (const s of ['drumloop', 'drumkit', 'instpreset', 'fxpreset', 'oneshot', 'rig']) assert.ok(scopes.has(s), s);
   assert.ok(!scopes.has('drums'), 'old combined scope is gone');
 });
 
-test('sequencers only live inside jam rigs and are named as such', async () => {
-  const { allJamRigs } = await import('../js/tree.js');
-  const rng = makeRng(59);
-  const cfg = {
-    ...config,
-    hardware: [...config.hardware, { id: 'hapax', name: 'Hapax', type: 'sequencer', weight: 5 }],
-    rigs: { min: 1, max: 2, excluded: [], custom: [] },
-  };
-  const ids = allJamRigs(cfg).map((r) => r.id);
-  assert.ok(ids.includes('hapax+p6'), 'sequencer pairs with a synth');
-  assert.ok(!ids.includes('hapax'), 'a sequencer alone is not a rig');
-  assert.ok(!ids.includes('hapax+tr8'), 'sequencer plus drum machine has no lead');
-  for (let i = 0; i < 100; i++) {
-    const loop = generateSession({
-      locks: { category: 'assets', assetType: 'loop', loopMethod: 'hardware' },
-      config: cfg,
-      rng,
-    });
-    assert.notEqual(loop.selections[DEVICE_DECISION], 'hapax');
-    const sound = generateSession({
-      locks: { category: 'assets', assetType: 'sound', soundMethod: 'hardware' },
-      config: cfg,
-      rng,
-    });
-    assert.notEqual(sound.selections[DEVICE_DECISION], 'hapax');
-  }
-  const jam = generateSession({ locks: { category: 'jamming', jamType: 'synth', rig: 'hapax+p6' }, config: cfg, rng });
-  assert.equal(
-    jam.prompt,
-    'Synth jam on the Prophet-6, sequenced by the Hapax. No goal, just play and record everything.',
-  );
-  assert.equal(jam.routingText, undefined, 'no effects, no routing line');
-});
-
-test('per-type limits shape generated rigs', async () => {
-  const { allJamRigs } = await import('../js/tree.js');
-  const base = { hardware: config.hardware, rigs: { min: 1, max: 3, excluded: [], custom: [], perType: {} } };
-  const noFx = allJamRigs({ ...base, rigs: { ...base.rigs, perType: { fx: { min: 0, max: 0 } } } });
-  assert.ok(
-    noFx.length > 0 && noFx.every((r) => !r.devices.some((d) => d.type === 'fx')),
-    'max 0 effects removes pedals',
-  );
-  const needFx = allJamRigs({ ...base, rigs: { ...base.rigs, perType: { fx: { min: 1, max: 1 } } } });
-  assert.ok(
-    needFx.length > 0 && needFx.every((r) => r.devices.filter((d) => d.type === 'fx').length === 1),
-    'min 1 effect forces a pedal',
-  );
-  const oneSynth = allJamRigs({
-    ...base,
-    rigs: { ...base.rigs, perType: { synth: { min: 1, max: 1 }, keys: { min: 0, max: 0 } } },
-  });
-  assert.ok(oneSynth.every((r) => r.devices.some((d) => d.id === 'p6') && !r.devices.some((d) => d.id === 'nord')));
-  const custom = allJamRigs({
-    ...base,
-    rigs: { ...base.rigs, perType: { fx: { min: 0, max: 0 } }, custom: [{ id: 'micro+p6', devices: ['micro', 'p6'] }] },
-  });
-  assert.ok(
-    custom.some((r) => r.id === 'micro+p6' && r.custom),
-    'custom rigs ignore per-type limits',
-  );
-});
-
 test('effects in a rig are routed onto an instrument or a send', async () => {
   const { routeRig, routingText } = await import('../js/engine.js');
-  const { rigOptionId } = await import('../js/tree.js');
   const byId = Object.fromEntries(config.hardware.map((h) => [h.id, h]));
   const rig = [byId.p6, byId.tr8, byId.micro];
   const rng = makeRng(61);
@@ -637,14 +496,12 @@ test('effects in a rig are routed onto an instrument or a send', async () => {
   assert.deepEqual(routeRig([byId.micro], {}, {}, rng), [], 'no instruments, no routing');
   assert.equal(routingText([{ fx: byId.micro, target: 'send' }]), 'Microcosm on a send.');
   assert.equal(routingText([{ fx: byId.micro, target: byId.p6 }]), 'Microcosm on the Prophet-6.');
-  assert.equal(rigOptionId(['p6', 'micro'], { micro: 'send' }), 'micro+p6@micro:send');
-  assert.equal(rigOptionId(['p6', 'micro'], { micro: 'random' }), 'micro+p6');
 
-  const cfg = { ...config, rigs: { min: 2, max: 3, excluded: [], custom: [], sends: { enabled: true, chance: 5 } } };
+  const cfg = { ...config, rigs: { min: 2, max: 3, sends: { enabled: true, chance: 5 } } };
   let sawRouting = false;
   for (let i = 0; i < 200; i++) {
     const r = generateSession({ locks: { category: 'jamming', jamType: 'synth' }, config: cfg, rng });
-    if (r.selections.rig.includes('micro')) {
+    if (r.rig.includes('micro')) {
       sawRouting = true;
       assert.match(r.routingText, /^Microcosm on (a send|the .+)\.$/);
       assert.equal(r.routing.length, 1);
@@ -653,21 +510,234 @@ test('effects in a rig are routed onto an instrument or a send', async () => {
     }
   }
   assert.ok(sawRouting);
-  const fixedCfg = {
-    ...config,
-    rigs: {
-      min: 1,
-      max: 1,
-      excluded: [],
-      custom: [{ id: 'micro+p6@micro:send', devices: ['p6', 'micro'], routing: { micro: 'send' } }],
-      sends: { enabled: true, chance: 0 },
+  const pinned = generateSession({
+    locks: { category: 'jamming', jamType: 'synth' },
+    config: {
+      ...config,
+      rigConstraints: {
+        min: 2,
+        max: 2,
+        perType: {},
+        sendChance: 0,
+        must: ['p6', 'micro'],
+        never: [],
+        pins: { micro: 'send' },
+      },
     },
-  };
-  const fixed = generateSession({
-    locks: { category: 'jamming', jamType: 'synth', rig: 'micro+p6@micro:send' },
-    config: fixedCfg,
     rng,
   });
-  assert.equal(fixed.routingText, 'Microcosm on a send.', 'a fixed send route wins even with send chance 0');
-  assert.match(fixed.prompt, /through the Microcosm\./);
+  assert.equal(pinned.routingText, 'Microcosm on a send.', 'a pinned send route wins even with send chance 0');
+  assert.match(pinned.prompt, /^Synth jam on the Prophet-6, through the Microcosm\./);
+});
+
+test('rigs are generated from constraints: size, per type, must, never, and a lead device', async () => {
+  const { enumerateRigs, pickRig, normalizeRigConstraints, defaultRigConstraints } = await import('../js/rigs.js');
+  const hw = [...config.hardware, { id: 'hapax', name: 'Hapax', type: 'sequencer', weight: 5 }];
+  const base = { ...defaultRigConstraints({ rigs: { min: 1, max: 2 } }) };
+  const ids = (rigs) =>
+    rigs
+      .map((r) =>
+        r
+          .map((d) => d.id)
+          .sort()
+          .join('+'),
+      )
+      .sort();
+  const all = ids(enumerateRigs(hw, base));
+  assert.ok(all.includes('p6') && all.includes('nord') && all.includes('micro+p6') && all.includes('hapax+p6'));
+  assert.ok(!all.includes('tr8') && !all.includes('micro') && !all.includes('hapax'), 'no rig without a lead device');
+  assert.ok(!all.includes('micro+tr8') && !all.includes('hapax+tr8') && !all.includes('sp404+tr8'));
+  const mustTr8 = ids(enumerateRigs(hw, { ...base, must: ['tr8'] }));
+  assert.ok(mustTr8.length > 0 && mustTr8.every((id) => id.includes('tr8')), 'must-have devices are in every rig');
+  const neverP6 = ids(enumerateRigs(hw, { ...base, never: ['p6'] }));
+  assert.ok(neverP6.length > 0 && neverP6.every((id) => !id.includes('p6')), 'excluded devices never appear');
+  assert.deepEqual(
+    enumerateRigs(hw, { ...base, must: ['p6'], never: ['p6'] }),
+    [],
+    'contradictory must/never gives nothing',
+  );
+  const noFx = enumerateRigs(hw, { ...base, max: 3, perType: { fx: { min: 0, max: 0 } } });
+  assert.ok(noFx.length && noFx.every((r) => !r.some((d) => d.type === 'fx')));
+  const oneFx = enumerateRigs(hw, { ...base, max: 3, perType: { fx: { min: 1, max: 1 } } });
+  assert.ok(oneFx.length && oneFx.every((r) => r.filter((d) => d.type === 'fx').length === 1));
+  const exactlyThree = enumerateRigs(hw, { ...base, min: 3, max: 3 });
+  assert.ok(exactlyThree.length && exactlyThree.every((r) => r.length === 3));
+  assert.equal(
+    pickRig(hw, { ...base, must: ['p6', 'tr8', 'micro', 'nord', 'hapax'] }, makeRng(1)),
+    null,
+    'more musts than max',
+  );
+
+  const rng = makeRng(67);
+  let sawPenalised = 0;
+  for (let i = 0; i < 300; i++) {
+    const rig = pickRig(hw, base, rng, (id) => (id === 'p6' ? 0.05 : 1));
+    if (rig.some((d) => d.id === 'p6')) sawPenalised++;
+  }
+  assert.ok(sawPenalised < 60, `rotation penalty makes p6 rare (${sawPenalised}/300)`);
+
+  const norm = normalizeRigConstraints(
+    {
+      min: 9,
+      max: 0,
+      perType: { fx: { min: 2, max: 1 }, nope: { min: 1 } },
+      sendChance: 99,
+      must: ['p6', 'ghost', 'micro'],
+      never: ['p6', 'tr8'],
+      pins: { micro: 'send', p6: 'send' },
+    },
+    { hardware: hw, rigs: { min: 1, max: 2 } },
+  );
+  assert.deepEqual(norm, {
+    min: 1,
+    max: 4,
+    perType: { fx: { min: 1, max: 2 } },
+    sendChance: 10,
+    must: ['p6', 'micro'],
+    never: ['tr8'],
+    pins: { micro: 'send' },
+  });
+});
+
+test('synth jams use the rig constraints and name every device, sequencers and grooveboxes included', () => {
+  const rng = makeRng(53);
+  const hw = [
+    ...config.hardware,
+    { id: 'hapax', name: 'Hapax', type: 'sequencer', weight: 5 },
+    { id: 'deluge', name: 'Deluge', type: 'groovebox', weight: 5 },
+  ];
+  const cfg = { ...config, hardware: hw, rigs: { min: 2, max: 3, sends: { enabled: true, chance: 5 } } };
+  let sawThree = false;
+  let sawPedal = false;
+  for (let i = 0; i < 300; i++) {
+    const r = generateSession({
+      locks: { category: 'jamming', jamType: 'synth' },
+      config: cfg,
+      rng,
+      withConstraint: true,
+    });
+    assert.match(r.prompt, /^Synth jam on the .+ (with|through|sequenced by) the .+\. No goal/);
+    assert.ok(r.rig.length >= 2 && r.rig.length <= 3);
+    assert.equal(r.selections[DEVICE_DECISION], undefined, 'single-device pick is not used for synth jams');
+    if (r.rig.length === 3) sawThree = true;
+    if (r.rig.includes('micro')) {
+      sawPedal = true;
+      assert.match(r.prompt, /through the Microcosm\./);
+    }
+    for (const id of r.rig) assert.ok(r.detail.includes(hw.find((d) => d.id === id).name));
+  }
+  assert.ok(sawThree && sawPedal);
+  const lock = (must, extra = {}) => ({
+    ...cfg,
+    rigConstraints: { min: must.length, max: must.length, perType: {}, sendChance: 0, must, never: [], pins: {} },
+    ...extra,
+  });
+  const seq = generateSession({ locks: { category: 'jamming', jamType: 'synth' }, config: lock(['p6', 'hapax']), rng });
+  assert.equal(
+    seq.prompt,
+    'Synth jam on the Prophet-6, sequenced by the Hapax. No goal, just play and record everything.',
+  );
+  assert.equal(seq.routingText, undefined);
+  const three = generateSession({
+    locks: { category: 'jamming', jamType: 'synth' },
+    config: lock(['p6', 'tr8', 'micro']),
+    rng,
+  });
+  assert.equal(
+    three.prompt,
+    'Synth jam on the Prophet-6 with the TR-8S, through the Microcosm. No goal, just play and record everything.',
+  );
+  const boxPlain = generateSession({
+    locks: { category: 'jamming', jamType: 'synth' },
+    config: lock(['p6', 'deluge']),
+    rng,
+  });
+  assert.equal(
+    boxPlain.prompt,
+    'Synth jam on the Prophet-6 with the Deluge. No goal, just play and record everything.',
+  );
+  const boxSeq = generateSession({
+    locks: { category: 'jamming', jamType: 'synth' },
+    config: lock(['p6', 'deluge'], { rigs: { ...cfg.rigs, grooveboxSequences: true } }),
+    rng,
+  });
+  assert.equal(
+    boxSeq.prompt,
+    'Synth jam on the Prophet-6, sequenced by the Deluge. No goal, just play and record everything.',
+  );
+  const boxAlone = generateSession({
+    locks: { category: 'jamming', jamType: 'synth' },
+    config: lock(['deluge'], { rigs: { ...cfg.rigs, grooveboxSequences: true } }),
+    rng,
+  });
+  assert.equal(
+    boxAlone.prompt,
+    'Synth jam on the Deluge. No goal, just play and record everything.',
+    'a lone groovebox still plays',
+  );
+  const impossible = generateSession({
+    locks: { category: 'jamming', jamType: 'synth' },
+    config: {
+      ...cfg,
+      rigConstraints: { min: 1, max: 1, perType: {}, sendChance: 0, must: ['p6', 'tr8'], never: [], pins: {} },
+    },
+    rng,
+  });
+  assert.match(impossible.prompt, /^Synth jam on any synth\./);
+  assert.ok(impossible.rigNotice);
+  for (let i = 0; i < 100; i++) {
+    const loop = generateSession({
+      locks: { category: 'assets', assetType: 'loop', loopMethod: 'hardware' },
+      config: cfg,
+      rng,
+    });
+    assert.notEqual(loop.selections[DEVICE_DECISION], 'hapax', 'sequencers never lead a loop');
+  }
+});
+
+test('gear rotation lowers the odds of recently used gear, constraints and twists', () => {
+  const rng = makeRng(71);
+  const recent = { devices: new Set(['p6']), constraints: new Set(['c-one-hand']), twists: new Set(['micro']) };
+  const on = { ...config, rotation: { enabled: true, strength: 10, includeConstraints: true }, recent };
+  const off = { ...config, rotation: { enabled: false }, recent };
+  let p6On = 0;
+  let p6Off = 0;
+  for (let i = 0; i < 400; i++) {
+    const a = generateSession({
+      locks: { category: 'assets', assetType: 'loop', loopKind: 'pad', loopMethod: 'hardware' },
+      config: on,
+      rng,
+    });
+    const b = generateSession({
+      locks: { category: 'assets', assetType: 'loop', loopKind: 'pad', loopMethod: 'hardware' },
+      config: off,
+      rng,
+    });
+    if (a.selections[DEVICE_DECISION] === 'p6') p6On++;
+    if (b.selections[DEVICE_DECISION] === 'p6') p6Off++;
+  }
+  assert.ok(p6On < 60 && p6Off > 150, `rotation on ${p6On}, off ${p6Off}`);
+  let oneHand = 0;
+  for (let i = 0; i < 300; i++) {
+    const r = generateSession({
+      locks: { category: 'jamming', jamType: 'piano' },
+      config: on,
+      rng,
+      withConstraint: true,
+    });
+    if (r.constraintId === 'c-one-hand') oneHand++;
+  }
+  assert.ok(oneHand < 15, `recent constraint rare (${oneHand})`);
+  const noConstraintRotation = { ...on, rotation: { ...on.rotation, includeConstraints: false } };
+  let oneHandPlain = 0;
+  for (let i = 0; i < 300; i++) {
+    const r = generateSession({
+      locks: { category: 'jamming', jamType: 'piano' },
+      config: noConstraintRotation,
+      rng,
+      withConstraint: true,
+    });
+    if (r.constraintId === 'c-one-hand') oneHandPlain++;
+  }
+  assert.ok(oneHandPlain > 25, `constraint rotation can be switched off (${oneHandPlain})`);
 });

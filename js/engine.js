@@ -1,5 +1,6 @@
 // Resolution engine: turns the user's locked choices plus weights into a full session.
 import { constraintPool } from './constraints.js';
+import { defaultRigConstraints, pickRig } from './rigs.js';
 import {
   DEFAULT_WEIGHT,
   DEVICE_DECISION,
@@ -7,7 +8,6 @@ import {
   FX_DECISION,
   FX_NONE,
   RANDOM_ROUTE,
-  RIG_DECISION,
   ROLE_OF,
   SEND,
   SOFTWARE_DECISION,
@@ -34,6 +34,23 @@ export function optionWeight(decision, option, weights = {}) {
   const override = weights?.[decision.id]?.[option.id];
   if (typeof override === 'number' && Number.isFinite(override)) return Math.max(0, override);
   return option.weight ?? DEFAULT_WEIGHT;
+}
+
+/**
+ * Rotation: a multiplier for options used in recent sessions.
+ * `recent` is { devices: Set, constraints: Set, twists: Set } built from the journal.
+ */
+export function rotationPenalty(config = {}) {
+  const rot = config.rotation || {};
+  const recent = config.recent || {};
+  if (!rot.enabled) return () => 1;
+  const factor = Math.max(0, 1 - Math.min(10, Math.max(0, rot.strength ?? 7)) / 10);
+  const mult = factor === 0 ? 0.05 : factor;
+  return (id, kind = 'devices') => {
+    if (kind === 'constraints' && rot.includeConstraints === false) return 1;
+    if (kind === 'twists' && rot.includeConstraints === false) return 1;
+    return recent[kind]?.has?.(id) ? mult : 1;
+  };
 }
 
 /** Pick one item from `items` using `weightOf(item)`; returns null when nothing is pickable. */
@@ -104,6 +121,7 @@ export function pruneLocks(decisions, locks) {
  */
 export function resolve({ locks = {}, weights = {}, config = {}, rng = Math.random }) {
   const decisions = buildDecisions(config);
+  const penalty = rotationPenalty(config);
   const selections = {};
   const locked = {};
   const conflicts = [];
@@ -130,7 +148,12 @@ export function resolve({ locks = {}, weights = {}, config = {}, rng = Math.rand
     const fixed = { ...cleanLocks, ...selections };
     delete fixed[decision.id];
     const compatible = decision.options.filter((o) => isCompatible(decisions, decision, o, fixed));
-    let pick = weightedPick(compatible, (o) => optionWeight(decision, o, weights), rng);
+    const rotated = (o) => {
+      if (decision.id === DEVICE_DECISION || decision.id === SOFTWARE_DECISION) return penalty(o.id, 'devices');
+      if (decision.id === FX_DECISION && o.id !== FX_NONE) return penalty(o.id, 'twists');
+      return 1;
+    };
+    let pick = weightedPick(compatible, (o) => optionWeight(decision, o, weights) * rotated(o), rng);
     if (!pick && compatible.length && !decision.optional) {
       // Every compatible option has weight 0: fall back to an even pick rather than fail.
       pick = weightedPick(compatible, () => 1, rng);
@@ -162,7 +185,9 @@ function randomInt(rng, min, max) {
 export function pickConstraint(config, selections, rng = Math.random, excludeId = null) {
   const pool = constraintPool(config, selections);
   const candidates = pool.length > 1 && excludeId ? pool.filter((c) => c.id !== excludeId) : pool;
-  const picked = weightedPick(candidates, () => 1, rng);
+  const penalty = rotationPenalty(config);
+  const picked =
+    weightedPick(candidates, (c) => penalty(c.id, 'constraints'), rng) || weightedPick(candidates, () => 1, rng);
   return picked ? { id: picked.id, text: picked.text } : null;
 }
 
@@ -211,8 +236,13 @@ export function generateSession({ locks = {}, weights = {}, config = {}, rng = M
   const device = hardware.find((h) => h.id === sel[DEVICE_DECISION]) || null;
   const plugin = software.find((h) => h.id === sel[SOFTWARE_DECISION]) || null;
   const track = tracks.find((t) => t.id === sel[TRACK_DECISION]) || null;
-  const rigOption = findOption(findDecision(decisions, RIG_DECISION), sel[RIG_DECISION]);
-  const rig = rigOption ? rigOption.devices.map((id) => hardware.find((h) => h.id === id)).filter(Boolean) : [];
+  const rigConstraints = config.rigConstraints || defaultRigConstraints(config);
+  const rig =
+    sel.jamType === 'synth'
+      ? pickRig(hardware, rigConstraints, rng, (id) => rotationPenalty(config)(id, 'devices')) || []
+      : [];
+  if (sel.jamType === 'synth' && hardware.length && !rig.length)
+    result.rigNotice = 'No rig fits the current rig constraints.';
   let pedal =
     sel[FX_DECISION] && sel[FX_DECISION] !== FX_NONE
       ? [...hardware, ...software].find((h) => h.id === sel[FX_DECISION])
@@ -235,9 +265,17 @@ export function generateSession({ locks = {}, weights = {}, config = {}, rng = M
     return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names[0];
   };
   const onRig = () => {
-    const instruments = rig.filter((d) => ROLE_OF(d) === 'instrument');
+    let instruments = rig.filter((d) => ROLE_OF(d) === 'instrument');
     const effects = rig.filter((d) => ROLE_OF(d) === 'fx');
-    const sequencers = rig.filter((d) => ROLE_OF(d) === 'sequencer');
+    let sequencers = rig.filter((d) => ROLE_OF(d) === 'sequencer');
+    // Optionally let a groovebox act as the rig's sequencer when there is something else to play.
+    if (config.rigs?.grooveboxSequences && instruments.length > 1 && !sequencers.length) {
+      const box = instruments.find((d) => d.type === 'groovebox');
+      if (box) {
+        instruments = instruments.filter((d) => d !== box);
+        sequencers = [box];
+      }
+    }
     if (!instruments.length) return 'on any synth';
     let text = `on the ${instruments[0].name}`;
     if (instruments.length > 1) text += ` with ${listNames(instruments.slice(1))}`;
@@ -295,7 +333,14 @@ export function generateSession({ locks = {}, weights = {}, config = {}, rng = M
     title = { synth: 'Synth jam', piano: 'Piano jam', other: 'Free jam' }[sel.jamType] || 'Jam';
     if (sel.jamType === 'synth') {
       prompt = `Synth jam ${onRig()}. No goal, just play and record everything.`;
-      const routes = routeRig(rig, rigOption?.routing || {}, config, rng);
+      const routes = routeRig(
+        rig,
+        rigConstraints.pins || {},
+        { rigs: { sends: { enabled: true, chance: rigConstraints.sendChance } } },
+        rng,
+      );
+      result.rig = rig.map((d) => d.id);
+      result.rigLabel = rig.map((d) => d.name).join(' + ');
       if (routes.length) {
         result.routing = routes.map((r) => ({ fx: r.fx.id, target: r.target === SEND ? SEND : r.target.id }));
         result.routingText = routingText(routes);
@@ -336,7 +381,7 @@ export function generateSession({ locks = {}, weights = {}, config = {}, rng = M
   if (pedal) result.twist = `Twist: run something through the ${pedal.name}.`;
 
   if (withConstraint) {
-    const picked = pickConstraint(config, sel, rng);
+    const picked = pickConstraint(config, { ...sel, rigSize: rig.length }, rng);
     if (picked) {
       result.constraint = picked.text;
       result.constraintId = picked.id;

@@ -73,7 +73,7 @@ test('parseBackup accepts a bare settings object and rejects junk', () => {
   assert.throws(() => parseBackup('nope'));
 });
 
-test('settings keep rig routing, per-type limits and send options', () => {
+test('settings keep rig defaults, presets and rotation options', () => {
   const s = normalizeSettings({
     hardware: [
       { id: 'p6', name: 'Prophet-6', type: 'synth' },
@@ -83,20 +83,69 @@ test('settings keep rig routing, per-type limits and send options', () => {
     rigs: {
       min: 2,
       max: 9,
-      custom: [{ devices: ['p6', 'micro'], routing: { micro: 'send', ghost: 'p6' } }, { devices: ['micro', 'hapax'] }],
       perType: { fx: { min: 3, max: 1 }, bogus: { min: 1, max: 1 } },
       sends: { enabled: false, chance: 42 },
+      grooveboxSequences: true,
     },
+    rigPresets: [
+      { name: ' Minimal ', constraints: { min: 1, max: 1, must: ['p6'], pins: { micro: 'send' } } },
+      { name: '', constraints: {} },
+    ],
+    rotation: { enabled: true, lookBack: 99, strength: -3 },
   });
   assert.equal(s.hardware[2].type, 'sequencer');
-  assert.deepEqual(s.rigs.custom, [
-    { id: 'micro+p6@micro:send', devices: ['p6', 'micro'], routing: { micro: 'send' } },
-  ]);
-  assert.deepEqual(s.rigs.perType, { fx: { min: 1, max: 3 } });
-  assert.deepEqual(s.rigs.sends, { enabled: false, chance: 10 });
-  assert.equal(s.rigs.max, 4);
-  const entry = makeEntry({ prompt: 'x', routingText: 'Microcosm on a send.' });
-  assert.equal(entry.routingText, 'Microcosm on a send.');
+  assert.deepEqual(s.rigs, {
+    min: 2,
+    max: 4,
+    perType: { fx: { min: 1, max: 3 } },
+    sends: { enabled: false, chance: 10 },
+    grooveboxSequences: true,
+  });
+  assert.equal(s.rigPresets.length, 1);
+  assert.equal(s.rigPresets[0].name, 'Minimal');
+  assert.deepEqual(s.rigPresets[0].constraints.must, ['p6']);
+  assert.deepEqual(s.rigPresets[0].constraints.pins, {}, 'a pin on a device that is not a must is dropped');
+  assert.deepEqual(s.rotation, { enabled: true, lookBack: 20, strength: 0, includeConstraints: true });
+  const entry = makeEntry({
+    prompt: 'x',
+    routingText: 'Microcosm on a send.',
+    rig: ['p6', 'micro'],
+    constraintId: 'c-mono',
+  });
+  assert.deepEqual(entry.rigDevices, ['p6', 'micro']);
   const parsed = parseBackup(makeBackup(s, [entry]));
   assert.equal(parsed.journal[0].routingText, 'Microcosm on a send.');
+  assert.deepEqual(parsed.journal[0].rigDevices, ['p6', 'micro']);
+  assert.equal(parsed.journal[0].constraintId, 'c-mono');
+});
+
+test('recentUsage and filterEntries', async () => {
+  const { recentUsage, filterEntries } = await import('../js/journal.js');
+  const entries = [
+    makeEntry(
+      {
+        prompt: 'Synth jam',
+        categoryLabel: 'Jamming',
+        rig: ['p6', 'micro'],
+        constraintId: 'c-mono',
+        selections: { fxTwist: 'none' },
+      },
+      { rating: 5, notes: 'keeper take', createdAt: 3 },
+    ),
+    makeEntry(
+      { prompt: 'Pad loop', categoryLabel: 'Assets creation', selections: { device: 'nord', fxTwist: 'cxm' } },
+      { rating: 3, notes: 'meh', createdAt: 2 },
+    ),
+    makeEntry({ prompt: 'Old', categoryLabel: 'Jamming', selections: { device: 'tr8' } }, { createdAt: 1 }),
+  ];
+  const recent = recentUsage(entries, 2);
+  assert.deepEqual([...recent.devices].sort(), ['micro', 'nord', 'p6']);
+  assert.deepEqual([...recent.constraints], ['c-mono']);
+  assert.deepEqual([...recent.twists], ['cxm']);
+  assert.ok(!recent.devices.has('tr8'), 'older than lookBack is ignored');
+  assert.equal(filterEntries(entries, { type: 'Jamming' }).length, 2);
+  assert.equal(filterEntries(entries, { minRating: 4 }).length, 1);
+  assert.equal(filterEntries(entries, { query: 'KEEPER' }).length, 1);
+  assert.equal(filterEntries(entries, { query: 'pad' }).length, 1);
+  assert.equal(filterEntries(entries, {}).length, 3);
 });

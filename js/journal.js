@@ -103,7 +103,9 @@ export function makeEntry(session, extra = {}) {
     selections: { ...(session.selections || {}) },
     bpm: session.bpm ?? null,
     constraint: session.constraint || '',
+    constraintId: session.constraintId || null,
     routingText: session.routingText || '',
+    rigDevices: Array.isArray(session.rig) ? [...session.rig] : [],
     rating: Number.isInteger(extra.rating) && extra.rating >= 1 && extra.rating <= 5 ? extra.rating : null,
     notes: (extra.notes || '').trim(),
     audio: extra.audio || null, // { name, type, size, blob, durationSec? }
@@ -143,6 +145,41 @@ export function formatBytes(bytes) {
   if (!bytes) return '';
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * What was used in the last `lookBack` sessions, for gear rotation.
+ * @returns {{devices: Set<string>, constraints: Set<string>, twists: Set<string>}}
+ */
+export function recentUsage(entries, lookBack = 3) {
+  const devices = new Set();
+  const constraints = new Set();
+  const twists = new Set();
+  for (const e of entries.slice(0, Math.max(0, lookBack))) {
+    for (const id of e.rigDevices || []) devices.add(id);
+    const sel = e.selections || {};
+    if (sel.device) devices.add(sel.device);
+    if (sel.software) devices.add(sel.software);
+    if (sel.fxTwist && sel.fxTwist !== 'none') twists.add(sel.fxTwist);
+    if (e.constraintId) constraints.add(e.constraintId);
+  }
+  return { devices, constraints, twists };
+}
+
+/** Filter journal entries by session type, minimum rating and free text. */
+export function filterEntries(entries, { type = '', minRating = 0, query = '' } = {}) {
+  const q = query.trim().toLowerCase();
+  return entries.filter((e) => {
+    if (type && e.categoryLabel !== type) return false;
+    if (minRating && (e.rating || 0) < minRating) return false;
+    if (q) {
+      const hay = [e.prompt, e.notes, e.title, e.twist, e.constraint, e.routingText, ...(e.detail || [])]
+        .join(' ')
+        .toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
 }
 
 /** A backup contains settings and the journal (without audio, which is too large for JSON). */
@@ -185,7 +222,9 @@ export function parseBackup(data) {
       selections: e.selections && typeof e.selections === 'object' ? e.selections : {},
       bpm: Number.isFinite(e.bpm) ? e.bpm : null,
       constraint: String(e.constraint || ''),
+      constraintId: typeof e.constraintId === 'string' ? e.constraintId : null,
       routingText: String(e.routingText || ''),
+      rigDevices: Array.isArray(e.rigDevices) ? e.rigDevices.map(String) : [],
       rating: Number.isInteger(e.rating) && e.rating >= 1 && e.rating <= 5 ? e.rating : null,
       notes: String(e.notes || ''),
       // The clip itself never travels in a backup; keep its name so the journal can say so.
