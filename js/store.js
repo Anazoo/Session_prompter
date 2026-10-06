@@ -23,6 +23,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   rigPresets: [],
   // Gear rotation: make recently used gear, constraints and twists less likely.
   rotation: { enabled: false, lookBack: 3, strength: 7, includeConstraints: true },
+  // Musical extras switched on in the session builder.
+  music: { tempo: false, key: false },
 });
 
 export function uid() {
@@ -129,6 +131,7 @@ export function normalizeSettings(raw) {
     rigs,
     rigPresets,
     rotation,
+    music: { tempo: raw.music?.tempo === true, key: raw.music?.key === true },
   };
 }
 

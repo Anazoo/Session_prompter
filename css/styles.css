@@ -1197,3 +1197,41 @@ textarea {
 .filters .muted {
   margin-top: 10px;
 }
+
+/* Tempo, key, length row */
+.tempo,
+.key {
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.tempo {
+  color: #f5b301;
+}
+
+.key {
+  color: #38bdf8;
+}
+
+.link.metro.on {
+  color: var(--danger);
+}
+
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.stepper-value {
+  min-width: 64px;
+  text-align: center;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+}
+
+.length-row {
+  border-bottom: 0;
+}

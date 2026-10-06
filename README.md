@@ -10,8 +10,10 @@ actually do it.
 - **Weighted probabilities** for every option, adjustable in Settings.
 - **Hardware and software lists** so prompts name your actual gear ("Create a
   pad loop on the Prophet-6", "Design a preset in Serum").
-- A **countdown timer** (60 minutes by default) with a chime, a screen wake lock,
-  and state that survives reloads.
+- A **countdown timer** (60 minutes by default, changeable per session from the
+  Session tab) with a chime, a screen wake lock, and state that survives reloads.
+- Optional **tempo & meter** and **key & scale** lines for jams and loops, with
+  a built-in **metronome** at the rolled BPM.
 - A **journal**: log each finished session with a 1 to 5 star rating, notes on
   what you made and an optional audio clip (pick a bounce from Files or record
   straight from the mic). Shows totals per session type, your average rating
@@ -82,9 +84,21 @@ device; sequencers and effects never lead a session on their own.
 constraints that appeared in your last few logged sessions less likely, with a
 look-back count and a strength from "slightly less likely" to "almost never".
 
-The result card has a **Share** button that puts the prompt, routing, twist and
-constraint on the iOS share sheet (or copies them where sharing is not
-available).
+The result card has a **Share** button that puts the prompt, routing, tempo,
+key, twist and constraint on the iOS share sheet (or copies them where sharing
+is not available). Journal entries have their own Share, which adds the date,
+time worked, rating and notes, and attaches the audio clip when there is one.
+
+**Tempo & meter** and **Key & scale** are switches in the session builder. On,
+a jam or loop-creation session gets a "Tempo: 112 BPM in 4/4" line (from the
+BPM range and time-signature weights) and a "Key: F# dorian" line (any root,
+scale by weight, set under Probabilities → Scale). Both have reroll links, and
+a "click" button runs a metronome at that tempo with an accented downbeat. A
+new track started from a BPM prompt gets the same tempo line and metronome.
+
+**Session length** can be changed in the builder for the next session only,
+with presets and a five-minute stepper; the Settings value stays the default
+and the override clears once that session ends.
 
 A **Creative constraint** switch in the session builder decides whether a roll
 also gets an extra rule. The app picks one that fits the session: drum-loop
@@ -154,8 +168,8 @@ the app asks the browser for persistent storage on the first save.
 
 ## Settings
 
-- **Timer**: session length in minutes (presets for 25, 45, 60, 90), keep screen
-  awake, chime on/off.
+- **Timer**: default session length in minutes (presets for 25, 45, 60, 90),
+  keep screen awake, chime on/off. A per-session length lives in the Session tab.
 - **Hardware** and **Software**: name, type (synth, drum machine, sampler,
   groovebox, keys/piano, effects/pedal, sequencer, other) and a weight from 0
   to 10 for how often it gets picked.
@@ -187,6 +201,8 @@ js/timer.js              countdown timer, wake lock, chime
 js/journal.js            IndexedDB journal, stats, backup format
 js/constraints.js        creative constraint pool and scope matching
 js/rigs.js               jam rig constraints and generation
+js/music.js              scales, roots, tempo helpers
+js/metronome.js          Web Audio metronome
 js/app.js                UI
 tests/                   engine and journal tests
 scripts/serve.mjs        tiny static server for development

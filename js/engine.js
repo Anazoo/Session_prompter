@@ -1,6 +1,7 @@
 // Resolution engine: turns the user's locked choices plus weights into a full session.
 import { constraintPool } from './constraints.js';
 import { defaultRigConstraints, pickRig } from './rigs.js';
+import { ROOTS, SCALE_DECISION, formatKey, scaleWeight } from './music.js';
 import {
   DEFAULT_WEIGHT,
   DEVICE_DECISION,
@@ -222,10 +223,40 @@ export function routingText(routes) {
   );
 }
 
+/** Roll a tempo and meter using the time-signature weights. */
+export function pickTempo(config = {}, weights = {}, rng = Math.random) {
+  const range = config.bpm || { min: 70, max: 160 };
+  const bpm = randomInt(rng, range.min ?? 70, range.max ?? 160);
+  const decision = findDecision(buildDecisions(config), 'timeSig');
+  const sig = weightedPick(decision.options, (o) => optionWeight(decision, o, weights), rng) || decision.options[0];
+  return { bpm, timeSig: sig.id };
+}
+
+/** Roll a key: any root, a scale by weight. */
+export function pickKey(weights = {}, rng = Math.random, exclude = null) {
+  const root = ROOTS[Math.floor(rng() * ROOTS.length)];
+  const options = SCALE_DECISION.options.filter((o) => o.id !== exclude);
+  const scale = weightedPick(options, (o) => scaleWeight(o, weights), rng) || weightedPick(options, () => 1, rng);
+  return { root, scale: scale.id, text: formatKey(root, scale.id) };
+}
+
+/** Sessions where a tempo or key line makes sense: jams and loop creation. */
+export function musicApplies(selections) {
+  return selections.category === 'jamming' || (selections.category === 'assets' && selections.assetType === 'loop');
+}
+
 /**
- * @param {{locks?: object, weights?: object, config?: object, rng?: Function, withConstraint?: boolean}} args
+ * @param {{locks?: object, weights?: object, config?: object, rng?: Function, withConstraint?: boolean, withTempo?: boolean, withKey?: boolean}} args
  */
-export function generateSession({ locks = {}, weights = {}, config = {}, rng = Math.random, withConstraint = false }) {
+export function generateSession({
+  locks = {},
+  weights = {},
+  config = {},
+  rng = Math.random,
+  withConstraint = false,
+  withTempo = false,
+  withKey = false,
+}) {
   const result = resolve({ locks, weights, config, rng });
   const sel = result.selections;
   const decisions = buildDecisions(config);
@@ -379,6 +410,24 @@ export function generateSession({ locks = {}, weights = {}, config = {}, rng = M
   if (plugin && !detail.includes(plugin.name)) detail.push(plugin.name);
   if (track && !detail.includes(track.name)) detail.push(track.name);
   if (pedal) result.twist = `Twist: run something through the ${pedal.name}.`;
+
+  // Musical extras: a tempo and meter line for jams and loops (new tracks from BPM already have one), and a key.
+  if (sel.startPoint === 'bpmsig') {
+    result.timeSig = sel.timeSig;
+    result.tempoText = `${result.bpm} BPM in ${sel.timeSig}`;
+  } else if (withTempo && musicApplies(sel)) {
+    const tempo = pickTempo(config, weights, rng);
+    result.bpm = tempo.bpm;
+    result.timeSig = tempo.timeSig;
+    result.tempoText = `${tempo.bpm} BPM in ${tempo.timeSig}`;
+    detail.push(`${tempo.bpm} BPM`, tempo.timeSig);
+  }
+  if (withKey && musicApplies(sel)) {
+    const key = pickKey(weights, rng);
+    result.key = { root: key.root, scale: key.scale };
+    result.keyText = key.text;
+    detail.push(key.text);
+  }
 
   if (withConstraint) {
     const picked = pickConstraint(config, { ...sel, rigSize: rig.length }, rng);

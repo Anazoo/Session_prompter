@@ -1,6 +1,8 @@
 import {
   generateSession,
   isApplicable,
+  pickKey,
+  pickTempo,
   isCompatible,
   optionWeight,
   pickConstraint,
@@ -15,9 +17,10 @@ import {
   enumerateRigs,
   normalizeRigConstraints,
   pickRig,
-  rigLabel,
   summarizeConstraints,
 } from './rigs.js';
+import { SCALE_DECISION, beatsPerBar, scaleWeight } from './music.js';
+import { Metronome } from './metronome.js';
 import { BUILT_IN_CONSTRAINTS, SCOPES } from './constraints.js';
 import {
   DEFAULT_WEIGHT,
@@ -74,7 +77,11 @@ const state = {
   // Per-session jam rig constraints, started from the Settings defaults.
   rigConstraints: null,
   journalFilter: { type: '', minRating: 0, query: '' },
+  // One-off session length in minutes (null = the Settings default).
+  sessionMinutes: null,
+  metronomeOn: false,
 };
+const metronome = new Metronome();
 
 const root = document.getElementById('app');
 const audioUrls = new Map(); // entry id -> { blob, url }
@@ -123,7 +130,10 @@ function persistSettings() {
 
 function persistSession() {
   try {
-    localStorage.setItem(SESSION_KEY, JSON.stringify({ locks: state.locks, result: state.result }));
+    localStorage.setItem(
+      SESSION_KEY,
+      JSON.stringify({ locks: state.locks, result: state.result, sessionMinutes: state.sessionMinutes }),
+    );
   } catch {
     /* ignore */
   }
@@ -137,6 +147,8 @@ function restoreSession() {
     if (saved && typeof saved === 'object') {
       state.locks = pruneLocks(currentDecisions(), saved.locks || {});
       state.result = saved.result && typeof saved.result === 'object' ? saved.result : null;
+      const m = Number.parseInt(saved.sessionMinutes, 10);
+      state.sessionMinutes = Number.isFinite(m) && m >= 1 && m <= 240 ? m : null;
     }
   } catch {
     /* ignore */
@@ -168,6 +180,21 @@ function engineConfig() {
     rigConstraints: state.rigConstraints,
     recent: recentUsage(state.journal.entries, state.settings.rotation.lookBack),
   };
+}
+
+function sessionMinutes() {
+  return state.sessionMinutes ?? state.settings.timer.minutes;
+}
+
+function setSessionMinutes(minutes) {
+  state.sessionMinutes = minutes === null ? null : Math.min(240, Math.max(1, minutes));
+  persistSession();
+  render();
+}
+
+function stopMetronome() {
+  if (state.metronomeOn) metronome.stop();
+  state.metronomeOn = false;
 }
 
 function currentDecisions() {
@@ -297,7 +324,10 @@ function generate() {
     weights: state.settings.weights,
     config: engineConfig(),
     withConstraint: state.settings.constraints.enabled,
+    withTempo: state.settings.music.tempo,
+    withKey: state.settings.music.key,
   });
+  stopMetronome();
   state.result = result;
   persistSession();
   render();
@@ -306,7 +336,7 @@ function generate() {
 
 function startTimer() {
   if (!state.result) generate();
-  timer.start(state.settings.timer.minutes * 60 * 1000);
+  timer.start(sessionMinutes() * 60 * 1000);
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -317,13 +347,16 @@ function openLogDraft({ fromTimer }) {
     session: state.result,
     startedAt: fromTimer ? timer.state.startedAt : null,
     elapsedMs: fromTimer ? timer.elapsedMs : null,
-    plannedMs: fromTimer ? timer.state.durationMs : state.settings.timer.minutes * 60 * 1000,
+    plannedMs: fromTimer ? timer.state.durationMs : sessionMinutes() * 60 * 1000,
     notes: '',
     rating: null,
     audio: null,
     entryId: null,
   };
-  if (fromTimer) timer.reset();
+  if (fromTimer) {
+    timer.reset();
+    state.sessionMinutes = null; // a one-off length lasts for one session
+  }
   state.logDraft = draft;
   state.view = 'session';
   render();
@@ -566,22 +599,96 @@ function rerollRig() {
 async function shareResult() {
   const r = state.result;
   if (!r) return;
+  await shareText(`Session Prompter: ${r.title}`, sessionLines(r).join('\n'));
+}
+
+/** The lines that describe a session or a journal entry. */
+function sessionLines(r) {
   const lines = [r.prompt];
   if (r.routingText) lines.push(`Routing: ${r.routingText}`);
+  if (r.tempoText) lines.push(`Tempo: ${r.tempoText}`);
+  if (r.keyText) lines.push(`Key: ${r.keyText}`);
   if (r.twist) lines.push(r.twist);
   if (r.constraint) lines.push(`Constraint: ${r.constraint}`);
   if (r.detail?.length) lines.push(r.detail.join(' · '));
-  const text = lines.join('\n');
+  return lines;
+}
+
+async function shareText(title, text, files = []) {
   try {
     if (navigator.share) {
-      await navigator.share({ title: `Session Prompter: ${r.title}`, text });
+      const payload = { title, text };
+      if (files.length && navigator.canShare?.({ files })) payload.files = files;
+      await navigator.share(payload);
       return;
     }
     await navigator.clipboard.writeText(text);
-    showToast('Copied to the clipboard');
+    showToast(files.length ? 'Text copied. Sharing files needs the share sheet.' : 'Copied to the clipboard');
   } catch (err) {
-    if (err?.name !== 'AbortError') showToast('Could not share this session.');
+    if (err?.name !== 'AbortError') showToast('Could not share this.');
   }
+}
+
+/** Share a logged session: what it was, how it went, the notes, and the clip when there is one. */
+async function shareEntry(entry) {
+  const lines = [
+    `${formatDate(entry.createdAt)} · ${entry.categoryLabel}${entry.title && entry.title !== entry.categoryLabel ? ` · ${entry.title}` : ''}`,
+  ];
+  lines.push(...sessionLines(entry));
+  if (entry.elapsedMs) lines.push(`Worked: ${formatDuration(entry.elapsedMs)}`);
+  if (entry.rating) lines.push(`Rating: ${'★'.repeat(entry.rating)}${'☆'.repeat(5 - entry.rating)}`);
+  if (entry.notes) lines.push('', entry.notes);
+  const files = [];
+  if (entry.audio?.blob && typeof File !== 'undefined') {
+    files.push(
+      new File([entry.audio.blob], entry.audio.name || 'session-audio', {
+        type: entry.audio.type || entry.audio.blob.type,
+      }),
+    );
+  }
+  await shareText(`Session: ${entry.title || entry.categoryLabel}`, lines.join('\n'), files);
+}
+
+function rerollTempo() {
+  const r = state.result;
+  if (!r?.tempoText || r.selections?.startPoint === 'bpmsig') return;
+  let tempo = pickTempo(state.settings, state.settings.weights);
+  for (let i = 0; i < 10 && tempo.bpm === r.bpm && tempo.timeSig === r.timeSig; i++) {
+    tempo = pickTempo(state.settings, state.settings.weights);
+  }
+  const detail = (r.detail || []).filter((d) => d !== `${r.bpm} BPM` && d !== r.timeSig);
+  state.result = {
+    ...r,
+    bpm: tempo.bpm,
+    timeSig: tempo.timeSig,
+    tempoText: `${tempo.bpm} BPM in ${tempo.timeSig}`,
+    detail: [...detail, `${tempo.bpm} BPM`, tempo.timeSig],
+  };
+  if (state.metronomeOn) metronome.start(tempo.bpm, beatsPerBar(tempo.timeSig));
+  persistSession();
+  render();
+}
+
+function rerollKey() {
+  const r = state.result;
+  if (!r?.keyText) return;
+  const key = pickKey(state.settings.weights, Math.random, r.key?.scale);
+  const detail = (r.detail || []).filter((d) => d !== r.keyText);
+  state.result = { ...r, key: { root: key.root, scale: key.scale }, keyText: key.text, detail: [...detail, key.text] };
+  persistSession();
+  render();
+}
+
+function toggleMetronome() {
+  const r = state.result;
+  if (!r?.bpm) return;
+  if (state.metronomeOn) {
+    stopMetronome();
+  } else {
+    state.metronomeOn = metronome.start(r.bpm, beatsPerBar(r.timeSig));
+    if (!state.metronomeOn) showToast('Audio is not available here.');
+  }
+  render();
 }
 
 /** Swap the effects twist for another effect that fits, keeping everything else. */
@@ -730,9 +837,10 @@ function renderResult() {
   }
   if (r.bpm) tags.push(`<li class="chip tag">${r.bpm} BPM</li>`);
   if (r.rigLabel) tags.push(`<li class="chip tag">${esc(r.rigLabel)}</li>`);
-  const minutes = state.settings.timer.minutes;
+  const minutes = sessionMinutes();
   const timerIdle = timer.state.status === 'idle';
   const previous = lastLogged(r.title);
+  const canRerollTempo = r.tempoText && r.selections?.startPoint !== 'bpmsig';
   return `
     <section class="card result">
       <p class="eyebrow">${esc(r.categoryLabel)} · ${esc(r.title)}</p>
@@ -740,6 +848,12 @@ function renderResult() {
       ${r.rig?.length ? `<p class="rig-line">Rig: ${esc(r.rigLabel)} <button type="button" class="link" data-action="new-rig" aria-label="Pick a different rig">↻ different rig</button></p>` : ''}
       ${r.rigNotice ? `<p class="notice">${esc(r.rigNotice)} Open "Rig constraints" below to loosen them.</p>` : ''}
       ${r.routingText ? `<p class="routing">Routing: ${esc(r.routingText)} <button type="button" class="link" data-action="new-routing" aria-label="Pick a different routing">↻ different routing</button></p>` : ''}
+      ${
+        r.tempoText
+          ? `<p class="tempo">Tempo: ${esc(r.tempoText)} ${canRerollTempo ? `<button type="button" class="link" data-action="new-tempo" aria-label="Pick a different tempo">↻ different tempo</button>` : ''} <button type="button" class="link metro ${state.metronomeOn ? 'on' : ''}" data-action="metronome" aria-pressed="${state.metronomeOn}">${state.metronomeOn ? '■ stop click' : '▶ click'}</button></p>`
+          : ''
+      }
+      ${r.keyText ? `<p class="key">Key: ${esc(r.keyText)} <button type="button" class="link" data-action="new-key" aria-label="Pick a different key">↻ different key</button></p>` : ''}
       ${r.twist ? `<p class="twist">${esc(r.twist)} <button type="button" class="link" data-action="new-twist" aria-label="Pick a different effect">↻ different twist</button></p>` : ''}
       ${r.constraint ? `<p class="constraint">Constraint: ${esc(r.constraint)} <button type="button" class="link" data-action="new-constraint" aria-label="Pick a different rule">↻ different rule</button></p>` : ''}
       <ul class="chips">${tags.join('')}</ul>
@@ -852,11 +966,40 @@ function renderBuilder() {
         <span class="label">Creative constraint<span class="sub">Add one extra rule to this session</span></span>
         <label class="switch"><input type="checkbox" data-action="toggle-constraints" ${state.settings.constraints.enabled ? 'checked' : ''} aria-label="Add a creative constraint"><span></span></label>
       </div>
+      <div class="field">
+        <span class="label">Tempo &amp; meter<span class="sub">A BPM and time signature for jams and loops</span></span>
+        <label class="switch"><input type="checkbox" data-action="toggle-tempo" ${state.settings.music.tempo ? 'checked' : ''} aria-label="Add a tempo and meter"><span></span></label>
+      </div>
+      <div class="field">
+        <span class="label">Key &amp; scale<span class="sub">A root and scale for jams and loops</span></span>
+        <label class="switch"><input type="checkbox" data-action="toggle-key" ${state.settings.music.key ? 'checked' : ''} aria-label="Add a key and scale"><span></span></label>
+      </div>
+      ${renderLengthRow()}
       <div class="btn-row">
         <button class="btn primary big" data-action="generate">${state.result ? 'Roll again' : 'Generate session'}</button>
       </div>
       ${hasLocks ? `<div class="btn-row"><button class="btn ghost" data-action="clear-locks">Clear my choices</button></div>` : ''}
     </section>
+  `;
+}
+
+function renderLengthRow() {
+  const minutes = sessionMinutes();
+  const isDefault = state.sessionMinutes === null;
+  const presets = [25, 45, 60, 90];
+  return `
+    <div class="row length-row">
+      <div class="row-label"><span>Session length</span><span class="hint">${isDefault ? `default ${state.settings.timer.minutes} min` : 'this session only'}</span></div>
+      <div class="chips">
+        ${presets.map((m) => `<button type="button" class="chip ${minutes === m ? 'active' : ''}" data-action="length-preset" data-minutes="${m}">${m} min</button>`).join('')}
+        <span class="stepper" role="group" aria-label="Adjust session length">
+          <button type="button" class="chip" data-action="length-step" data-delta="-5" aria-label="Five minutes shorter">−5</button>
+          <span class="stepper-value">${minutes} min</span>
+          <button type="button" class="chip" data-action="length-step" data-delta="5" aria-label="Five minutes longer">+5</button>
+        </span>
+        ${isDefault ? '' : `<button type="button" class="chip random" data-action="length-default">Use default</button>`}
+      </div>
+    </div>
   `;
 }
 
@@ -962,6 +1105,8 @@ function renderLogForm(d) {
       <p class="eyebrow">${d.entryId ? 'Edit session' : 'Log this session'}</p>
       <p class="summary">${esc(s.prompt)}</p>
       ${s.routingText ? `<p class="routing">Routing: ${esc(s.routingText)}</p>` : ''}
+      ${s.tempoText ? `<p class="tempo">Tempo: ${esc(s.tempoText)}</p>` : ''}
+      ${s.keyText ? `<p class="key">Key: ${esc(s.keyText)}</p>` : ''}
       ${s.constraint ? `<p class="constraint">Constraint: ${esc(s.constraint)}</p>` : ''}
       ${meta.length ? `<p class="meta">${meta.join('')}</p>` : ''}
       <label class="block">How did it go?</label>
@@ -1083,6 +1228,8 @@ function renderEntry(e) {
       <p class="eyebrow">${esc(e.categoryLabel)}${e.title && e.title !== e.categoryLabel ? ` · ${esc(e.title)}` : ''}</p>
       <p class="prompt">${esc(e.prompt)}</p>
       ${e.routingText ? `<p class="routing">Routing: ${esc(e.routingText)}</p>` : ''}
+      ${e.tempoText ? `<p class="tempo">Tempo: ${esc(e.tempoText)}</p>` : ''}
+      ${e.keyText ? `<p class="key">Key: ${esc(e.keyText)}</p>` : ''}
       ${e.twist ? `<p class="twist">${esc(e.twist)}</p>` : ''}
       ${e.constraint ? `<p class="constraint">Constraint: ${esc(e.constraint)}</p>` : ''}
       <ul class="chips">${chips.join('')}</ul>
@@ -1092,6 +1239,7 @@ function renderEntry(e) {
       ${e.audio && !url ? `<p class="file-meta muted">Clip "${esc(e.audio.name)}" was not restored with this backup.</p>` : ''}
       <div class="btn-row">
         <button class="btn" data-action="edit-entry" data-id="${e.id}">Edit</button>
+        <button class="btn" data-action="share-entry" data-id="${e.id}" aria-label="Share this entry">Share</button>
         <button class="btn" data-action="roll-like" data-id="${e.id}">Roll this again</button>
         <button class="btn ghost danger" data-action="delete-entry" data-id="${e.id}">Delete</button>
       </div>
@@ -1380,6 +1528,18 @@ function renderSettings() {
       <p class="muted">Weights run from 0 to 10. The percentage is each option's chance within its group. 0 removes an option from the roll (you can still lock it by hand).</p>
       ${weightGroups}
       ${fxGroup}
+      <h3>Scale<span class="path">Key &amp; scale switch · jams and loops</span></h3>
+      <p class="muted">Any of the twelve roots is equally likely; these weights pick the scale.</p>
+      ${SCALE_DECISION.options
+        .map(
+          (o) => `
+        <label class="slider-row">
+          <span>${esc(o.label)}</span>
+          <input type="range" min="0" max="10" step="1" value="${scaleWeight(o, s.weights)}" data-action="weight" data-decision="${SCALE_DECISION.id}" data-option="${esc(o.id)}" aria-label="Scale: ${esc(o.label)} weight">
+          <output data-pct="${SCALE_DECISION.id}:${esc(o.id)}">${scalePercent(o)}</output>
+        </label>`,
+        )
+        .join('')}
       <h3>BPM range<span class="path">New track › BPM &amp; time signature</span></h3>
       <div class="field">
         <label for="bpm-min">Minimum BPM</label>
@@ -1421,7 +1581,19 @@ function renderSettings() {
   `;
 }
 
+function scalePercent(option) {
+  const total = SCALE_DECISION.options.reduce((sum, o) => sum + scaleWeight(o, state.settings.weights), 0);
+  return total > 0 ? `${Math.round((scaleWeight(option, state.settings.weights) / total) * 100)}%` : '–';
+}
+
 function refreshPercentLabels(decisionId) {
+  if (decisionId === SCALE_DECISION.id) {
+    for (const o of SCALE_DECISION.options) {
+      const out = document.querySelector(`output[data-pct="${SCALE_DECISION.id}:${o.id}"]`);
+      if (out) out.textContent = scalePercent(o);
+    }
+    return;
+  }
   const decision = findDecision(currentDecisions(), decisionId);
   if (!decision) return;
   const pct = percentLabels(decision);
@@ -1457,6 +1629,7 @@ root.addEventListener('click', (event) => {
   switch (action) {
     case 'view':
       state.view = target.dataset.view;
+      if (state.view !== 'session') stopMetronome();
       render();
       window.scrollTo({ top: 0 });
       break;
@@ -1491,9 +1664,13 @@ root.addEventListener('click', (event) => {
       break;
     case 'reset-timer':
       timer.reset();
+      state.sessionMinutes = null;
+      persistSession();
+      render();
       break;
     case 'next-session':
       timer.reset();
+      state.sessionMinutes = null;
       generate();
       break;
     case 'log-timer':
@@ -1544,6 +1721,27 @@ root.addEventListener('click', (event) => {
       break;
     case 'new-rig':
       rerollRig();
+      break;
+    case 'new-tempo':
+      rerollTempo();
+      break;
+    case 'new-key':
+      rerollKey();
+      break;
+    case 'metronome':
+      toggleMetronome();
+      break;
+    case 'share-entry':
+      if (entry) shareEntry(entry);
+      break;
+    case 'length-preset':
+      setSessionMinutes(Number(target.dataset.minutes));
+      break;
+    case 'length-step':
+      setSessionMinutes(sessionMinutes() + Number(target.dataset.delta));
+      break;
+    case 'length-default':
+      setSessionMinutes(null);
       break;
     case 'share':
       shareResult();
@@ -1906,6 +2104,16 @@ root.addEventListener('change', (event) => {
       render();
       break;
     }
+    case 'toggle-tempo':
+      state.settings = { ...state.settings, music: { ...state.settings.music, tempo: el.checked } };
+      persistSettings();
+      showToast(el.checked ? 'Next roll adds a tempo and meter' : 'Tempo off');
+      break;
+    case 'toggle-key':
+      state.settings = { ...state.settings, music: { ...state.settings.music, key: el.checked } };
+      persistSettings();
+      showToast(el.checked ? 'Next roll adds a key' : 'Key off');
+      break;
     case 'toggle-constraints':
       state.settings = {
         ...state.settings,

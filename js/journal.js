@@ -105,6 +105,8 @@ export function makeEntry(session, extra = {}) {
     constraint: session.constraint || '',
     constraintId: session.constraintId || null,
     routingText: session.routingText || '',
+    tempoText: session.tempoText || '',
+    keyText: session.keyText || '',
     rigDevices: Array.isArray(session.rig) ? [...session.rig] : [],
     rating: Number.isInteger(extra.rating) && extra.rating >= 1 && extra.rating <= 5 ? extra.rating : null,
     notes: (extra.notes || '').trim(),
@@ -173,7 +175,7 @@ export function filterEntries(entries, { type = '', minRating = 0, query = '' } 
     if (type && e.categoryLabel !== type) return false;
     if (minRating && (e.rating || 0) < minRating) return false;
     if (q) {
-      const hay = [e.prompt, e.notes, e.title, e.twist, e.constraint, e.routingText, ...(e.detail || [])]
+      const hay = [e.prompt, e.notes, e.title, e.twist, e.constraint, e.routingText, e.keyText, ...(e.detail || [])]
         .join(' ')
         .toLowerCase();
       if (!hay.includes(q)) return false;
@@ -224,6 +226,8 @@ export function parseBackup(data) {
       constraint: String(e.constraint || ''),
       constraintId: typeof e.constraintId === 'string' ? e.constraintId : null,
       routingText: String(e.routingText || ''),
+      tempoText: String(e.tempoText || ''),
+      keyText: String(e.keyText || ''),
       rigDevices: Array.isArray(e.rigDevices) ? e.rigDevices.map(String) : [],
       rating: Number.isInteger(e.rating) && e.rating >= 1 && e.rating <= 5 ? e.rating : null,
       notes: String(e.notes || ''),

@@ -741,3 +741,69 @@ test('gear rotation lowers the odds of recently used gear, constraints and twist
   }
   assert.ok(oneHandPlain > 25, `constraint rotation can be switched off (${oneHandPlain})`);
 });
+
+test('tempo and key lines are optional, apply to jams and loops, and follow the weights', async () => {
+  const { pickKey, pickTempo, musicApplies } = await import('../js/engine.js');
+  const { SCALE_DECISION, beatsPerBar, formatKey } = await import('../js/music.js');
+  const rng = makeRng(73);
+  const jamLocks = { category: 'jamming', jamType: 'piano' };
+  const plain = generateSession({ locks: jamLocks, config, rng });
+  assert.equal(plain.tempoText, undefined);
+  assert.equal(plain.keyText, undefined);
+  for (let i = 0; i < 100; i++) {
+    const r = generateSession({ locks: jamLocks, config, rng, withTempo: true, withKey: true });
+    assert.match(r.tempoText, /^\d+ BPM in \d+\/\d+$/);
+    assert.ok(r.bpm >= 90 && r.bpm <= 120, 'uses the configured BPM range');
+    assert.match(r.keyText, /^[A-G][#b]? .+/);
+    assert.ok(r.detail.includes(`${r.bpm} BPM`) && r.detail.includes(r.timeSig) && r.detail.includes(r.keyText));
+    assert.doesNotMatch(r.prompt, /BPM/, 'the prompt sentence stays clean; tempo is its own line');
+  }
+  const loop = generateSession({
+    locks: { category: 'assets', assetType: 'loop' },
+    config,
+    rng,
+    withTempo: true,
+    withKey: true,
+  });
+  assert.ok(loop.tempoText && loop.keyText, 'loops get tempo and key');
+  const sound = generateSession({
+    locks: { category: 'assets', assetType: 'sound' },
+    config,
+    rng,
+    withTempo: true,
+    withKey: true,
+  });
+  assert.equal(sound.tempoText, undefined, 'sound design does not');
+  assert.equal(sound.keyText, undefined);
+  const newTrack = generateSession({
+    locks: { category: 'tracks', trackType: 'new', startPoint: 'bpmsig' },
+    config,
+    rng,
+    withTempo: true,
+  });
+  assert.match(newTrack.tempoText, /^\d+ BPM in /, 'BPM start point exposes the same tempo line');
+  assert.equal(newTrack.detail.filter((d) => /BPM$/.test(d)).length, 1, 'no duplicate BPM chip');
+  assert.ok(!musicApplies({ category: 'tracks', trackType: 'existing' }));
+
+  let sawWholeTone = false;
+  let majors = 0;
+  for (let i = 0; i < 600; i++) {
+    const k = pickKey({}, rng);
+    if (k.scale === 'wholeTone') sawWholeTone = true;
+    if (k.scale === 'major') majors++;
+  }
+  assert.ok(sawWholeTone && majors > 60, `weights roughly honoured (${majors} majors)`);
+  for (let i = 0; i < 100; i++)
+    assert.notEqual(pickKey({ scale: { major: 0, minor: 0 } }, rng).scale, 'major', 'weight 0 removes a scale');
+  for (let i = 0; i < 50; i++) assert.notEqual(pickKey({}, rng, 'dorian').scale, 'dorian', 'exclude works for rerolls');
+  const t = pickTempo(
+    { bpm: { min: 100, max: 100 } },
+    { timeSig: { '4/4': 0, '3/4': 0, '6/8': 0, '5/4': 0, '7/8': 5 } },
+    rng,
+  );
+  assert.deepEqual(t, { bpm: 100, timeSig: '7/8' });
+  assert.equal(beatsPerBar('6/8'), 6);
+  assert.equal(beatsPerBar('garbage'), 4);
+  assert.equal(formatKey('F#', 'dorian'), 'F# dorian');
+  assert.equal(SCALE_DECISION.options.length, 12);
+});
