@@ -87,7 +87,8 @@ look-back count and a strength from "slightly less likely" to "almost never".
 The result card has a **Share** button that puts the prompt, routing, tempo,
 key, twist and constraint on the iOS share sheet (or copies them where sharing
 is not available). Journal entries have their own Share, which adds the date,
-time worked, rating and notes, and attaches the audio clip when there is one.
+time worked, rating and notes, plus a separate "Share clip" for the recording
+(share targets drop the text when a file is attached, so the two go separately).
 
 **Tempo & meter** and **Key & scale** are switches in the session builder. On,
 a jam or loop-creation session gets a "Tempo: 112 BPM in 4/4" line (from the

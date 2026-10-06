@@ -679,22 +679,26 @@ function sessionLines(r) {
   return lines;
 }
 
-async function shareText(title, text, files = []) {
+/** Share text via the share sheet, or copy it. Resolves true when it went somewhere. */
+async function shareText(title, text) {
   try {
     if (navigator.share) {
-      const payload = { title, text };
-      if (files.length && navigator.canShare?.({ files })) payload.files = files;
-      await navigator.share(payload);
-      return;
+      await navigator.share({ title, text });
+      return true;
     }
     await navigator.clipboard.writeText(text);
-    showToast(files.length ? 'Text copied. Sharing files needs the share sheet.' : 'Copied to the clipboard');
+    showToast('Copied to the clipboard');
+    return true;
   } catch (err) {
     if (err?.name !== 'AbortError') showToast('Could not share this.');
+    return false;
   }
 }
 
-/** Share a logged session: what it was, how it went, the notes, and the clip when there is one. */
+/**
+ * Share a logged session as text. The clip goes separately (see shareEntryClip): when a share
+ * carries a file, apps such as WhatsApp keep the file and drop the text.
+ */
 async function shareEntry(entry) {
   const lines = [
     `${formatDate(entry.createdAt)} · ${entry.categoryLabel}${entry.title && entry.title !== entry.categoryLabel ? ` · ${entry.title}` : ''}`,
@@ -703,15 +707,34 @@ async function shareEntry(entry) {
   if (entry.elapsedMs) lines.push(`Worked: ${formatDuration(entry.elapsedMs)}`);
   if (entry.rating) lines.push(`Rating: ${'★'.repeat(entry.rating)}${'☆'.repeat(5 - entry.rating)}`);
   if (entry.notes) lines.push('', entry.notes);
-  const files = [];
-  if (entry.audio?.blob && typeof File !== 'undefined') {
-    files.push(
-      new File([entry.audio.blob], entry.audio.name || 'session-audio', {
-        type: entry.audio.type || entry.audio.blob.type,
-      }),
-    );
+  const shared = await shareText(`Session: ${entry.title || entry.categoryLabel}`, lines.join('\n'));
+  if (shared && entry.audio?.blob) showToast('Text sent. Tap "Share clip" to send the recording too.', 5000);
+}
+
+/** Share only the recording of a logged session, as a file. */
+async function shareEntryClip(entry) {
+  if (!entry.audio?.blob || typeof File === 'undefined') return;
+  const file = new File([entry.audio.blob], entry.audio.name || 'session-audio', {
+    type: entry.audio.type || entry.audio.blob.type,
+  });
+  if (!navigator.share || !navigator.canShare?.({ files: [file] })) {
+    // No file sharing here: hand the clip over as a download instead.
+    const url = URL.createObjectURL(file);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = file.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    showToast('Sharing files is not available here, so the clip was downloaded.', 4000);
+    return;
   }
-  await shareText(`Session: ${entry.title || entry.categoryLabel}`, lines.join('\n'), files);
+  try {
+    await navigator.share({ files: [file], title: file.name });
+  } catch (err) {
+    if (err?.name !== 'AbortError') showToast('Could not share the clip.');
+  }
 }
 
 function rerollTempo() {
@@ -1316,7 +1339,8 @@ function renderEntry(e) {
       ${e.audio && !url ? `<p class="file-meta muted">Clip "${esc(e.audio.name)}" was not restored with this backup.</p>` : ''}
       <div class="btn-row">
         <button class="btn" data-action="edit-entry" data-id="${e.id}">Edit</button>
-        <button class="btn" data-action="share-entry" data-id="${e.id}" aria-label="Share this entry">Share</button>
+        <button class="btn" data-action="share-entry" data-id="${e.id}" aria-label="Share this entry as text">Share</button>
+        ${e.audio?.blob ? `<button class="btn" data-action="share-clip" data-id="${e.id}" aria-label="Share the recording">Share clip</button>` : ''}
         <button class="btn" data-action="roll-like" data-id="${e.id}">Roll this again</button>
         <button class="btn ghost danger" data-action="delete-entry" data-id="${e.id}">Delete</button>
       </div>
@@ -1829,6 +1853,9 @@ root.addEventListener('click', (event) => {
       break;
     case 'share-entry':
       if (entry) shareEntry(entry);
+      break;
+    case 'share-clip':
+      if (entry) shareEntryClip(entry);
       break;
     case 'length-preset':
       setSessionMinutes(Number(target.dataset.minutes));

@@ -148,6 +148,10 @@ lines the UI renders under it.
   installed app is exempt and the journal asks for persistent storage.
 - Recording in the home-screen app needs a recent iOS; older versions have no
   `getUserMedia` there, and the app says so.
+- Sharing: when a Web Share payload contains a file, most targets (WhatsApp
+  among them) keep the file and drop the text. Journal entries therefore share
+  text and the clip as two separate actions (`shareEntry`, `shareEntryClip`
+  in `js/app.js`); never put both in one `navigator.share` call.
 
 ## Testing
 
