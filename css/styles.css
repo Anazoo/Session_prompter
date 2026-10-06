@@ -1276,3 +1276,19 @@ textarea {
   margin: -4px 0 10px;
   max-width: 320px;
 }
+
+/* Tap tempo state and toast actions */
+.link.tap.active {
+  color: #f5b301;
+  text-decoration-color: #f5b301;
+}
+
+.toast-action {
+  margin-left: 10px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+  font-size: 13px;
+}

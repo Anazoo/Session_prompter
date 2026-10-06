@@ -22,6 +22,7 @@ import {
 import { SCALE_DECISION, beatsPerBar, bpmFromTaps, scaleWeight } from './music.js';
 import { Metronome } from './metronome.js';
 import { describeMediaError, isStandaloneIOS, pickRecordingType, prepareCapture, releaseCapture } from './media.js';
+import { APP_VERSION } from './version.js';
 import { BUILT_IN_CONSTRAINTS, SCOPES } from './constraints.js';
 import {
   DEFAULT_WEIGHT,
@@ -82,7 +83,10 @@ const state = {
   sessionMinutes: null,
   metronomeOn: false,
   tapTimes: [],
+  updateReady: false,
 };
+let swRegistration = null;
+let tapFadeHandle = null;
 const metronome = new Metronome();
 
 const root = document.getElementById('app');
@@ -235,10 +239,15 @@ function tapTempo() {
   const now = Date.now();
   const last = state.tapTimes[state.tapTimes.length - 1];
   state.tapTimes = last && now - last > 2500 ? [now] : [...state.tapTimes, now].slice(-8);
+  // Light the button while a tap run is in progress; it fades once taps stop.
+  clearTimeout(tapFadeHandle);
+  tapFadeHandle = setTimeout(() => {
+    state.tapTimes = [];
+    document.querySelector('button[data-action="tap-tempo"]')?.classList.remove('active');
+  }, 2500);
   const bpm = bpmFromTaps(state.tapTimes);
   if (!bpm) {
-    const tap = document.querySelector('button[data-action="tap-tempo"]');
-    if (tap) tap.textContent = 'tap again…';
+    document.querySelector('button[data-action="tap-tempo"]')?.classList.add('active');
     return;
   }
   if (state.result?.tempoText) setResultTempo(bpm, state.result.timeSig || '4/4');
@@ -248,14 +257,16 @@ function currentDecisions() {
   return buildDecisions(state.settings);
 }
 
-function showToast(message, ms = 2600) {
-  state.toast = message;
+function showToast(message, ms = 2600, action = null) {
+  state.toast = { message, action };
   renderToast();
   clearTimeout(toastHandle);
-  toastHandle = setTimeout(() => {
-    state.toast = null;
-    renderToast();
-  }, ms);
+  if (ms > 0) {
+    toastHandle = setTimeout(() => {
+      state.toast = null;
+      renderToast();
+    }, ms);
+  }
 }
 
 function renderToast() {
@@ -270,7 +281,15 @@ function renderToast() {
     el.setAttribute('role', 'status');
     document.body.appendChild(el);
   }
-  el.textContent = state.toast;
+  el.textContent = state.toast.message;
+  if (state.toast.action) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'toast-action';
+    btn.textContent = state.toast.action.label;
+    btn.addEventListener('click', state.toast.action.onClick);
+    el.append(' ', btn);
+  }
 }
 
 function pathLabel(decisions, decision) {
@@ -957,7 +976,7 @@ function renderResult() {
       ${r.routingText ? `<p class="routing">Routing: ${esc(r.routingText)} <button type="button" class="link" data-action="new-routing" aria-label="Pick a different routing">↻ different routing</button></p>` : ''}
       ${
         r.tempoText
-          ? `<p class="tempo">Tempo: ${esc(r.tempoText)} ${canRerollTempo ? `<button type="button" class="link" data-action="new-tempo" aria-label="Pick a different tempo">↻ different tempo</button>` : ''} <button type="button" class="link" data-action="tap-tempo" aria-label="Tap a tempo">tap</button> <button type="button" class="link metro ${state.metronomeOn ? 'on' : ''}" data-action="metronome" aria-pressed="${state.metronomeOn}">${state.metronomeOn ? '■ stop click' : '▶ click'}</button></p>
+          ? `<p class="tempo">Tempo: ${esc(r.tempoText)} ${canRerollTempo ? `<button type="button" class="link" data-action="new-tempo" aria-label="Pick a different tempo">↻ different tempo</button>` : ''} <button type="button" class="link tap ${state.tapTimes.length ? 'active' : ''}" data-action="tap-tempo" aria-label="Tap a tempo">tap</button> <button type="button" class="link metro ${state.metronomeOn ? 'on' : ''}" data-action="metronome" aria-pressed="${state.metronomeOn}">${state.metronomeOn ? '■ stop click' : '▶ click'}</button></p>
              ${state.metronomeOn ? `<label class="slider-row inline metro-volume"><span>Volume</span><input type="range" min="0" max="10" step="1" value="${state.settings.metronome.volume}" data-action="metro-volume" aria-label="Metronome volume"><output>${state.settings.metronome.volume * 10}%</output></label>` : ''}`
           : ''
       }
@@ -1685,6 +1704,15 @@ function renderSettings() {
     </section>
 
     <section class="card">
+      <h2>About</h2>
+      <div class="field">
+        <span class="label">Version<span class="sub">Session Prompter ${esc(APP_VERSION)}</span></span>
+        <button class="btn" data-action="check-update">Check for updates</button>
+      </div>
+      ${state.updateReady ? `<div class="btn-row"><button class="btn primary" data-action="apply-update">Update now</button></div>` : '<p class="muted">The app refreshes itself on the next open after a new release. If it looks stale, check here or close it fully and reopen.</p>'}
+    </section>
+
+    <section class="card">
       <h2>Danger zone</h2>
       <div class="btn-row">
         <button class="btn ghost danger" data-action="reset-all">Reset all settings</button>
@@ -1850,6 +1878,12 @@ root.addEventListener('click', (event) => {
       break;
     case 'test-mic':
       testMicrophone();
+      break;
+    case 'check-update':
+      checkForUpdates(true);
+      break;
+    case 'apply-update':
+      applyUpdate();
       break;
     case 'share-entry':
       if (entry) shareEntry(entry);
@@ -2301,8 +2335,59 @@ root.addEventListener('change', (event) => {
 render();
 loadJournal();
 
+// ---------- updates ----------
+
+function offerUpdate() {
+  state.updateReady = true;
+  showToast(`Version update ready.`, 0, { label: 'Reload', onClick: applyUpdate });
+  if (state.view === 'settings') render();
+}
+
+function applyUpdate() {
+  const waiting = swRegistration?.waiting;
+  if (waiting) waiting.postMessage('skipWaiting');
+  else window.location.reload();
+}
+
+async function checkForUpdates(announce = false) {
+  if (!swRegistration) {
+    if (announce) window.location.reload();
+    return;
+  }
+  try {
+    await swRegistration.update();
+    if (swRegistration.waiting) {
+      offerUpdate();
+    } else if (announce) {
+      showToast(`You are on the latest version (${APP_VERSION}).`);
+    }
+  } catch {
+    if (announce) showToast('Could not check for updates right now.');
+  }
+}
+
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (reloading) return;
+    reloading = true;
+    window.location.reload();
+  });
+  window.addEventListener('load', async () => {
+    try {
+      swRegistration = await navigator.serviceWorker.register('./sw.js');
+      if (swRegistration.waiting && navigator.serviceWorker.controller) offerUpdate();
+      swRegistration.addEventListener('updatefound', () => {
+        const installing = swRegistration.installing;
+        installing?.addEventListener('statechange', () => {
+          if (installing.state === 'installed' && navigator.serviceWorker.controller) offerUpdate();
+        });
+      });
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') checkForUpdates(false);
+      });
+    } catch {
+      /* offline or unsupported */
+    }
   });
 }

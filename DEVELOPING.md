@@ -22,6 +22,7 @@ js/constraints.js        creative constraint pool and scope matching
 js/music.js              scales, roots, tap tempo, beats per bar
 js/metronome.js          Web Audio click with accented downbeat and volume
 js/media.js              microphone capture helpers and readable error messages
+js/version.js            APP_VERSION, bumped with every release
 js/store.js              settings shape, defaults and normalisation (localStorage)
 js/journal.js            IndexedDB journal, stats, filters, recent usage, backup format
 js/timer.js              countdown timer, wake lock, chime
@@ -170,6 +171,15 @@ Formatting is Prettier with the repo's `.prettierrc`:
 
 ## Releasing
 
-Push to `main`. The workflow runs the tests and deploys the repository root to
-GitHub Pages. Bump `CACHE` in `sw.js` whenever files are added or renamed so
-installed apps refetch the shell.
+1. Bump `APP_VERSION` in `js/version.js` and `CACHE` in `sw.js` (every
+   release, not only when files are added). The version shows under
+   Settings → About; the cache name makes installed apps refetch the shell.
+2. Push to `main`. The workflow runs the tests and deploys the repository root
+   to GitHub Pages.
+
+How updates reach a phone: the service worker fetches with `cache: 'no-cache'`,
+so each open revalidates against the server. When a new worker installs,
+`js/app.js` shows a "Reload" toast and Settings → About offers "Update now"
+(it posts `skipWaiting` and reloads on `controllerchange`). Opening the app
+also triggers an update check when it becomes visible. An installed iOS app
+that was never closed can still run old code until it is relaunched.

@@ -175,6 +175,8 @@ the app asks the browser for persistent storage on the first save.
   keep screen awake, chime on/off. A per-session length lives in the header.
 - **Sounds & recording**: metronome volume and a microphone test that reports
   whether this device can record for the journal.
+- **About**: the running version and "Check for updates". A "Reload" prompt
+  also appears on its own when a new release has been fetched.
 - **Hardware** and **Software**: name, type (synth, drum machine, sampler,
   groovebox, keys/piano, effects/pedal, sequencer, other) and a weight from 0
   to 10 for how often it gets picked.
@@ -214,6 +216,7 @@ js/rigs.js               jam rig constraints and generation
 js/music.js              scales, roots, tempo helpers
 js/metronome.js          Web Audio metronome
 js/media.js              microphone helpers and recording error messages
+js/version.js            app version shown in Settings
 DEVELOPING.md            developer guide
 js/app.js                UI
 tests/                   engine and journal tests

@@ -1,5 +1,5 @@
 // Service worker: keeps the app usable offline. Network first, cache fallback.
-const CACHE = 'session-prompter-v6';
+const CACHE = 'session-prompter-v7';
 const SHELL = [
   './',
   './index.html',
@@ -16,6 +16,7 @@ const SHELL = [
   './js/music.js',
   './js/metronome.js',
   './js/media.js',
+  './js/version.js',
   './icons/icon.svg',
   './icons/icon-192.png',
   './icons/icon-512.png',
@@ -41,11 +42,17 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+self.addEventListener('message', (event) => {
+  if (event.data === 'skipWaiting') self.skipWaiting();
+});
+
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET' || new URL(request.url).origin !== self.location.origin) return;
   event.respondWith(
-    fetch(request)
+    // Revalidate with the server every time so a new deploy shows up on the next open,
+    // instead of waiting out the HTTP cache. Falls back to the cached copy offline.
+    fetch(request, { cache: 'no-cache' })
       .then((response) => {
         const copy = response.clone();
         caches
