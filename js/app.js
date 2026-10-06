@@ -19,8 +19,9 @@ import {
   pickRig,
   summarizeConstraints,
 } from './rigs.js';
-import { SCALE_DECISION, beatsPerBar, scaleWeight } from './music.js';
+import { SCALE_DECISION, beatsPerBar, bpmFromTaps, scaleWeight } from './music.js';
 import { Metronome } from './metronome.js';
+import { describeMediaError, isStandaloneIOS, pickRecordingType, prepareCapture, releaseCapture } from './media.js';
 import { BUILT_IN_CONSTRAINTS, SCOPES } from './constraints.js';
 import {
   DEFAULT_WEIGHT,
@@ -80,6 +81,7 @@ const state = {
   // One-off session length in minutes (null = the Settings default).
   sessionMinutes: null,
   metronomeOn: false,
+  tapTimes: [],
 };
 const metronome = new Metronome();
 
@@ -121,6 +123,7 @@ function esc(text) {
 function applyTimerSettings() {
   timer.keepAwake = state.settings.timer.keepAwake;
   timer.chimeEnabled = state.settings.timer.chime;
+  metronome.setVolume(state.settings.metronome.volume / 10);
 }
 
 function persistSettings() {
@@ -197,18 +200,62 @@ function stopMetronome() {
   state.metronomeOn = false;
 }
 
+/** Keep the click in step with the current result when the user left it on. */
+function syncMetronome() {
+  const r = state.result;
+  if (!state.settings.metronome.on || !r?.bpm) {
+    stopMetronome();
+    return;
+  }
+  if (state.metronomeOn) metronome.retune(r.bpm, beatsPerBar(r.timeSig));
+  else state.metronomeOn = metronome.start(r.bpm, beatsPerBar(r.timeSig));
+}
+
+function setMetronomePreference(on) {
+  state.settings = { ...state.settings, metronome: { ...state.settings.metronome, on } };
+  persistSettings();
+}
+
+function setResultTempo(bpm, timeSig) {
+  const r = state.result;
+  const detail = (r.detail || []).filter((d) => d !== `${r.bpm} BPM` && d !== r.timeSig);
+  state.result = {
+    ...r,
+    bpm,
+    timeSig,
+    tempoText: `${bpm} BPM in ${timeSig}`,
+    detail: [...detail, `${bpm} BPM`, timeSig],
+  };
+  if (state.metronomeOn) metronome.retune(bpm, beatsPerBar(timeSig));
+  persistSession();
+  render();
+}
+
+function tapTempo() {
+  const now = Date.now();
+  const last = state.tapTimes[state.tapTimes.length - 1];
+  state.tapTimes = last && now - last > 2500 ? [now] : [...state.tapTimes, now].slice(-8);
+  const bpm = bpmFromTaps(state.tapTimes);
+  if (!bpm) {
+    const tap = document.querySelector('button[data-action="tap-tempo"]');
+    if (tap) tap.textContent = 'tap again…';
+    return;
+  }
+  if (state.result?.tempoText) setResultTempo(bpm, state.result.timeSig || '4/4');
+}
+
 function currentDecisions() {
   return buildDecisions(state.settings);
 }
 
-function showToast(message) {
+function showToast(message, ms = 2600) {
   state.toast = message;
   renderToast();
   clearTimeout(toastHandle);
   toastHandle = setTimeout(() => {
     state.toast = null;
     renderToast();
-  }, 2600);
+  }, ms);
 }
 
 function renderToast() {
@@ -327,8 +374,9 @@ function generate() {
     withTempo: state.settings.music.tempo,
     withKey: state.settings.music.key,
   });
-  stopMetronome();
   state.result = result;
+  state.tapTimes = [];
+  syncMetronome();
   persistSession();
   render();
   document.querySelector('.result')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -430,22 +478,35 @@ function setDraftAudio(file) {
 
 // In-app recording via MediaRecorder (Safari 14.1+, Chrome, Firefox).
 async function startRecording() {
+  const env = { standalone: isStandaloneIOS(), secure: window.isSecureContext !== false };
   if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
-    showToast('Recording is not supported here. Use "Choose file" instead.');
+    showToast(describeMediaError(null, { ...env, supported: false }), 6000);
     return;
   }
+  // Playback-only audio sessions (timer chime, metronome) block the mic on iOS: switch first.
+  stopMetronome();
+  prepareCapture();
+  let stream = null;
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const mime = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg'].find((t) =>
-      MediaRecorder.isTypeSupported(t),
-    );
-    const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mime = pickRecordingType();
+    let recorder;
+    try {
+      recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    } catch {
+      recorder = new MediaRecorder(stream); // let the browser choose its default format
+    }
     const chunks = [];
     recorder.ondataavailable = (e) => {
       if (e.data && e.data.size) chunks.push(e.data);
     };
+    recorder.onerror = (e) => {
+      showToast(describeMediaError(e?.error || e, env), 6000);
+      stopRecording(false);
+    };
     recorder.onstop = () => {
       stream.getTracks().forEach((t) => t.stop());
+      releaseCapture();
       const type = recorder.mimeType || mime || 'audio/webm';
       const ext = type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm';
       const blob = new Blob(chunks, { type });
@@ -459,6 +520,8 @@ async function startRecording() {
           size: blob.size,
           blob,
         };
+      } else if (keep && state.logDraft) {
+        showToast('The recording came back empty. Try again or use "Choose file".', 5000);
       }
       render();
     };
@@ -470,7 +533,9 @@ async function startRecording() {
       if (el && state.recording) el.textContent = formatClock(Date.now() - state.recording.startedAt);
     }, 500);
   } catch (err) {
-    showToast(err?.name === 'NotAllowedError' ? 'Microphone access was denied.' : 'Could not start recording.');
+    stream?.getTracks().forEach((t) => t.stop());
+    releaseCapture();
+    showToast(describeMediaError(err, env), 7000);
   }
 }
 
@@ -656,17 +721,7 @@ function rerollTempo() {
   for (let i = 0; i < 10 && tempo.bpm === r.bpm && tempo.timeSig === r.timeSig; i++) {
     tempo = pickTempo(state.settings, state.settings.weights);
   }
-  const detail = (r.detail || []).filter((d) => d !== `${r.bpm} BPM` && d !== r.timeSig);
-  state.result = {
-    ...r,
-    bpm: tempo.bpm,
-    timeSig: tempo.timeSig,
-    tempoText: `${tempo.bpm} BPM in ${tempo.timeSig}`,
-    detail: [...detail, `${tempo.bpm} BPM`, tempo.timeSig],
-  };
-  if (state.metronomeOn) metronome.start(tempo.bpm, beatsPerBar(tempo.timeSig));
-  persistSession();
-  render();
+  setResultTempo(tempo.bpm, tempo.timeSig);
 }
 
 function rerollKey() {
@@ -684,11 +739,40 @@ function toggleMetronome() {
   if (!r?.bpm) return;
   if (state.metronomeOn) {
     stopMetronome();
+    setMetronomePreference(false);
   } else {
     state.metronomeOn = metronome.start(r.bpm, beatsPerBar(r.timeSig));
     if (!state.metronomeOn) showToast('Audio is not available here.');
+    else setMetronomePreference(true);
   }
   render();
+}
+
+/** Ask for the microphone once and report whether recording would work. */
+async function testMicrophone() {
+  const env = { standalone: isStandaloneIOS(), secure: window.isSecureContext !== false };
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+    showToast(describeMediaError(null, { ...env, supported: false }), 6000);
+    return;
+  }
+  stopMetronome();
+  prepareCapture();
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const label = stream.getAudioTracks()[0]?.label || 'microphone';
+    stream.getTracks().forEach((t) => t.stop());
+    const type = pickRecordingType();
+    showToast(
+      type === null || type === undefined
+        ? 'Microphone works, but this browser cannot record audio.'
+        : `Microphone works: ${label}. Format: ${type || 'browser default'}.`,
+      5000,
+    );
+  } catch (err) {
+    showToast(describeMediaError(err, env), 7000);
+  } finally {
+    releaseCapture();
+  }
 }
 
 /** Swap the effects twist for another effect that fits, keeping everything else. */
@@ -777,7 +861,7 @@ function render() {
   root.innerHTML = `
     <header class="topbar">
       <h1>Session Prompter</h1>
-      ${timerStatus !== 'idle' ? `<button class="timer-pill ${timerStatus}" data-action="go-timer" aria-label="Show timer">${timerStatus === 'done' ? 'Done' : '⏱'} <span class="pill-clock">${formatClock(timer.remainingMs)}</span></button>` : ''}
+      ${timerStatus !== 'idle' ? `<button class="timer-pill ${timerStatus}" data-action="go-timer" aria-label="Show timer">${timerStatus === 'done' ? 'Done' : '⏱'} <span class="pill-clock">${formatClock(timer.remainingMs)}</span></button>` : renderLengthControl()}
     </header>
     <main class="view">
       ${state.view === 'settings' ? renderSettings() : state.view === 'journal' ? renderJournal() : renderSessionView()}
@@ -850,7 +934,8 @@ function renderResult() {
       ${r.routingText ? `<p class="routing">Routing: ${esc(r.routingText)} <button type="button" class="link" data-action="new-routing" aria-label="Pick a different routing">↻ different routing</button></p>` : ''}
       ${
         r.tempoText
-          ? `<p class="tempo">Tempo: ${esc(r.tempoText)} ${canRerollTempo ? `<button type="button" class="link" data-action="new-tempo" aria-label="Pick a different tempo">↻ different tempo</button>` : ''} <button type="button" class="link metro ${state.metronomeOn ? 'on' : ''}" data-action="metronome" aria-pressed="${state.metronomeOn}">${state.metronomeOn ? '■ stop click' : '▶ click'}</button></p>`
+          ? `<p class="tempo">Tempo: ${esc(r.tempoText)} ${canRerollTempo ? `<button type="button" class="link" data-action="new-tempo" aria-label="Pick a different tempo">↻ different tempo</button>` : ''} <button type="button" class="link" data-action="tap-tempo" aria-label="Tap a tempo">tap</button> <button type="button" class="link metro ${state.metronomeOn ? 'on' : ''}" data-action="metronome" aria-pressed="${state.metronomeOn}">${state.metronomeOn ? '■ stop click' : '▶ click'}</button></p>
+             ${state.metronomeOn ? `<label class="slider-row inline metro-volume"><span>Volume</span><input type="range" min="0" max="10" step="1" value="${state.settings.metronome.volume}" data-action="metro-volume" aria-label="Metronome volume"><output>${state.settings.metronome.volume * 10}%</output></label>` : ''}`
           : ''
       }
       ${r.keyText ? `<p class="key">Key: ${esc(r.keyText)} <button type="button" class="link" data-action="new-key" aria-label="Pick a different key">↻ different key</button></p>` : ''}
@@ -974,7 +1059,6 @@ function renderBuilder() {
         <span class="label">Key &amp; scale<span class="sub">A root and scale for jams and loops</span></span>
         <label class="switch"><input type="checkbox" data-action="toggle-key" ${state.settings.music.key ? 'checked' : ''} aria-label="Add a key and scale"><span></span></label>
       </div>
-      ${renderLengthRow()}
       <div class="btn-row">
         <button class="btn primary big" data-action="generate">${state.result ? 'Roll again' : 'Generate session'}</button>
       </div>
@@ -983,22 +1067,15 @@ function renderBuilder() {
   `;
 }
 
-function renderLengthRow() {
+/** Header control: the next session's length, five minutes at a time. One-off; Settings keeps the default. */
+function renderLengthControl() {
   const minutes = sessionMinutes();
   const isDefault = state.sessionMinutes === null;
-  const presets = [25, 45, 60, 90];
   return `
-    <div class="row length-row">
-      <div class="row-label"><span>Session length</span><span class="hint">${isDefault ? `default ${state.settings.timer.minutes} min` : 'this session only'}</span></div>
-      <div class="chips">
-        ${presets.map((m) => `<button type="button" class="chip ${minutes === m ? 'active' : ''}" data-action="length-preset" data-minutes="${m}">${m} min</button>`).join('')}
-        <span class="stepper" role="group" aria-label="Adjust session length">
-          <button type="button" class="chip" data-action="length-step" data-delta="-5" aria-label="Five minutes shorter">−5</button>
-          <span class="stepper-value">${minutes} min</span>
-          <button type="button" class="chip" data-action="length-step" data-delta="5" aria-label="Five minutes longer">+5</button>
-        </span>
-        ${isDefault ? '' : `<button type="button" class="chip random" data-action="length-default">Use default</button>`}
-      </div>
+    <div class="length-control" role="group" aria-label="Session length">
+      <button type="button" data-action="length-step" data-delta="-5" aria-label="Five minutes shorter" ${minutes <= 5 ? 'disabled' : ''}>−</button>
+      <button type="button" class="length-value ${isDefault ? '' : 'override'}" data-action="length-default" aria-label="${isDefault ? `Session length ${minutes} minutes (default)` : `Session length ${minutes} minutes for this session, tap to use the default ${state.settings.timer.minutes}`}" ${isDefault ? 'disabled' : ''}>${minutes} min${isDefault ? '' : ' •'}</button>
+      <button type="button" data-action="length-step" data-delta="5" aria-label="Five minutes longer" ${minutes >= 240 ? 'disabled' : ''}>+</button>
     </div>
   `;
 }
@@ -1507,6 +1584,18 @@ function renderSettings() {
       </div>
     </section>
 
+    <section class="card">
+      <h2>Sounds &amp; recording</h2>
+      <label class="slider-row">
+        <span>Metronome volume</span>
+        <input type="range" min="0" max="10" step="1" value="${s.metronome.volume}" data-action="metro-volume" aria-label="Metronome volume">
+        <output>${s.metronome.volume * 10}%</output>
+      </label>
+      <p class="muted">The click remembers whether you left it running and follows the tempo of each new roll.</p>
+      <div class="btn-row"><button class="btn" data-action="test-mic">Test microphone</button></div>
+      <p class="muted">Checks that this device can record for the journal. On iPhone the first tap asks for permission.</p>
+    </section>
+
     ${renderGearSection('hardware')}
     ${renderGearSection('software')}
 
@@ -1630,6 +1719,7 @@ root.addEventListener('click', (event) => {
     case 'view':
       state.view = target.dataset.view;
       if (state.view !== 'session') stopMetronome();
+      else syncMetronome();
       render();
       window.scrollTo({ top: 0 });
       break;
@@ -1730,6 +1820,12 @@ root.addEventListener('click', (event) => {
       break;
     case 'metronome':
       toggleMetronome();
+      break;
+    case 'tap-tempo':
+      tapTempo();
+      break;
+    case 'test-mic':
+      testMicrophone();
       break;
     case 'share-entry':
       if (entry) shareEntry(entry);
@@ -1955,6 +2051,17 @@ root.addEventListener('input', (event) => {
       const line = document.querySelector('.rig-panel .summary-line');
       if (line)
         line.innerHTML = `${esc(summarizeConstraints(state.rigConstraints))} · <strong>${enumerateRigs(state.settings.hardware, state.rigConstraints).length} rigs fit</strong>`;
+      break;
+    }
+    case 'metro-volume': {
+      const volume = Number(el.value);
+      state.settings = { ...state.settings, metronome: { ...state.settings.metronome, volume } };
+      persistSettings();
+      for (const out of document.querySelectorAll('input[data-action="metro-volume"]')) {
+        const o = out.parentElement?.querySelector('output');
+        if (o) o.textContent = `${volume * 10}%`;
+        if (out !== el) out.value = String(volume);
+      }
       break;
     }
     case 'rotation-strength': {

@@ -35,6 +35,24 @@ export function beatsPerBar(timeSig) {
   return Number.isFinite(n) && n > 0 ? n : 4;
 }
 
+/**
+ * Tempo from tap timestamps (ms). Uses the last few taps; gaps over 2.5 s start a new run.
+ * @returns {number|null} rounded BPM, or null with fewer than two usable taps
+ */
+export function bpmFromTaps(times) {
+  if (!Array.isArray(times) || times.length < 2) return null;
+  const sorted = [...times].sort((a, b) => a - b);
+  let run = [sorted[sorted.length - 1]];
+  for (let i = sorted.length - 2; i >= 0 && run.length < 8; i--) {
+    if (run[run.length - 1] - sorted[i] > 2500) break;
+    run.push(sorted[i]);
+  }
+  if (run.length < 2) return null;
+  const span = run[0] - run[run.length - 1];
+  const bpm = Math.round((60000 * (run.length - 1)) / span);
+  return Math.min(300, Math.max(20, bpm));
+}
+
 export function formatKey(root, scaleId) {
   const scale = SCALE_DECISION.options.find((o) => o.id === scaleId);
   return `${root} ${scale ? scale.label.toLowerCase() : scaleId}`;

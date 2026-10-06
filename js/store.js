@@ -25,6 +25,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   rotation: { enabled: false, lookBack: 3, strength: 7, includeConstraints: true },
   // Musical extras switched on in the session builder.
   music: { tempo: false, key: false },
+  // Metronome: volume 0..10 and whether the click was left running.
+  metronome: { volume: 7, on: false },
 });
 
 export function uid() {
@@ -132,6 +134,10 @@ export function normalizeSettings(raw) {
     rigPresets,
     rotation,
     music: { tempo: raw.music?.tempo === true, key: raw.music?.key === true },
+    metronome: {
+      volume: clampInt(raw.metronome?.volume, 0, 10, base.metronome.volume),
+      on: raw.metronome?.on === true,
+    },
   };
 }
 

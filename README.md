@@ -92,13 +92,15 @@ time worked, rating and notes, and attaches the audio clip when there is one.
 **Tempo & meter** and **Key & scale** are switches in the session builder. On,
 a jam or loop-creation session gets a "Tempo: 112 BPM in 4/4" line (from the
 BPM range and time-signature weights) and a "Key: F# dorian" line (any root,
-scale by weight, set under Probabilities → Scale). Both have reroll links, and
-a "click" button runs a metronome at that tempo with an accented downbeat. A
-new track started from a BPM prompt gets the same tempo line and metronome.
+scale by weight, set under Probabilities → Scale). Both have reroll links, "tap"
+sets the BPM by tapping, and a "click" button runs a metronome at that tempo
+with an accented downbeat, a volume slider, and a memory of whether you left it
+on so it follows each new roll. A new track started from a BPM prompt gets the
+same tempo line and metronome.
 
-**Session length** can be changed in the builder for the next session only,
-with presets and a five-minute stepper; the Settings value stays the default
-and the override clears once that session ends.
+**Session length** can be changed from the header, five minutes at a time, for
+the next session only; the Settings value stays the default and the override
+clears once that session ends.
 
 A **Creative constraint** switch in the session builder decides whether a roll
 also gets an extra rule. The app picks one that fits the session: drum-loop
@@ -169,7 +171,9 @@ the app asks the browser for persistent storage on the first save.
 ## Settings
 
 - **Timer**: default session length in minutes (presets for 25, 45, 60, 90),
-  keep screen awake, chime on/off. A per-session length lives in the Session tab.
+  keep screen awake, chime on/off. A per-session length lives in the header.
+- **Sounds & recording**: metronome volume and a microphone test that reports
+  whether this device can record for the journal.
 - **Hardware** and **Software**: name, type (synth, drum machine, sampler,
   groovebox, keys/piano, effects/pedal, sequencer, other) and a weight from 0
   to 10 for how often it gets picked.
@@ -187,6 +191,11 @@ the app asks the browser for persistent storage on the first save.
   effects, and the BPM range.
 - **Backup**: export or import a JSON backup (settings plus journal notes).
 
+## Editing the app
+
+See [DEVELOPING.md](DEVELOPING.md) for how the code is organised and recipes
+for adding options, device types, constraints, scales and settings.
+
 ## Project layout
 
 ```
@@ -203,6 +212,8 @@ js/constraints.js        creative constraint pool and scope matching
 js/rigs.js               jam rig constraints and generation
 js/music.js              scales, roots, tempo helpers
 js/metronome.js          Web Audio metronome
+js/media.js              microphone helpers and recording error messages
+DEVELOPING.md            developer guide
 js/app.js                UI
 tests/                   engine and journal tests
 scripts/serve.mjs        tiny static server for development

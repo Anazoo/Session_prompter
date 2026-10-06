@@ -1235,3 +1235,44 @@ textarea {
 .length-row {
   border-bottom: 0;
 }
+
+/* Header length control */
+.length-control {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.length-control button {
+  min-width: 40px;
+  min-height: 36px;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.length-control button[disabled] {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.length-control .length-value {
+  font-size: 14px;
+  min-width: 68px;
+  font-variant-numeric: tabular-nums;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  opacity: 1;
+}
+
+.length-control .length-value.override {
+  color: var(--accent-strong);
+}
+
+.metro-volume {
+  margin: -4px 0 10px;
+  max-width: 320px;
+}

@@ -8,7 +8,18 @@ export class Metronome {
     this.beats = 4;
     this.nextBeatTime = 0;
     this.beatIndex = 0;
-    this.onTick = () => {};
+    this.volume = 0.7; // 0..1
+  }
+
+  setVolume(value) {
+    this.volume = Math.min(1, Math.max(0, Number(value) || 0));
+  }
+
+  /** Change tempo while running; keeps the click going without a restart glitch. */
+  retune(bpm, beats = this.beats) {
+    this.bpm = Math.max(20, Math.min(300, bpm));
+    this.beats = Math.max(1, beats);
+    this.beatIndex = 0;
   }
 
   start(bpm, beats = 4) {
@@ -54,8 +65,10 @@ export class Metronome {
     const gain = this.ctx.createGain();
     osc.type = 'square';
     osc.frequency.value = accent ? 1760 : 1175;
+    const peak = (accent ? 0.5 : 0.3) * this.volume;
+    if (peak <= 0.0002) return;
     gain.gain.setValueAtTime(0.0001, time);
-    gain.gain.exponentialRampToValueAtTime(accent ? 0.5 : 0.3, time + 0.002);
+    gain.gain.exponentialRampToValueAtTime(peak, time + 0.002);
     gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.06);
     osc.connect(gain).connect(this.ctx.destination);
     osc.start(time);
